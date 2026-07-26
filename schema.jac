@@ -89,21 +89,26 @@ node Lane {
     has query_index: int = 0;
 
     def narrate(sentence: str, kind: ReasoningKind, t: float) -> Reasoning;
-    def open_probe(query: str, keywords: str, date_posted: str) -> SearchProbe;
+    def open_probe(keywords: str, date_posted: str) -> SearchProbe;
     def probes -> list[SearchProbe];
 }
 
 node SearchProbe {
-    has query: str;
-    has keywords: str = "";
+    has keywords: str;
     has date_posted: str = "";
-    has variant: int = 0;
-    has depth: int = 0;
-    has state: ProbeState = ProbeState.PENDING;
+    has rung: int = 0;
+    has move: str = "seed";
+    has reason: str = "";
+    has state: str = "pending";
     has yield_count: int = 0;
+    has result_count: int = 0;
+    has url: str = "";
+    has query: str = "";
+    has depth: int = 0;
+    has variant: int = 0;
     has widened_from: str = "";
 
-    def widen(query: str, keywords: str, date_posted: str) -> SearchProbe;
+    def widen(keywords: str, date_posted: str, because: str) -> SearchProbe;
 }
 
 node Reasoning {
@@ -236,11 +241,11 @@ edge Surfaced: Lane --> Prospect {
 }
 
 edge Probe: Lane --> SearchProbe {
-    has opened_at: float = 0.0;
+    has created_at: float = 0.0;
 }
 
 edge Widened: SearchProbe --> SearchProbe {
-    has reason: str = "";
+    has because: str = "";
 }
 
 edge HasEvidence: Prospect --> Evidence {
@@ -375,14 +380,16 @@ impl Lane.narrate(sentence: str, kind: ReasoningKind, t: float) -> Reasoning {
 }
 
 # Open a fresh probe on this lane's widening ladder.
-impl Lane.open_probe(query: str, keywords: str, date_posted: str) -> SearchProbe {
+impl Lane.open_probe(keywords: str, date_posted: str) -> SearchProbe {
     variant = len([self ->:Probe:->]);
     probe = SearchProbe(
-        query=query,
         keywords=keywords,
         date_posted=date_posted,
+        query=keywords,
         variant=variant,
+        rung=0,
         depth=0,
+        move="seed",
         state=ProbeState.PENDING
     );
     self +>:Probe:+> probe;
@@ -396,17 +403,20 @@ impl Lane.probes -> list[SearchProbe] {
 # A dry probe spawns a widened child. The traversal literally deepens where the
 # search struggled, and printgraph renders the dead branches alongside the live
 # ones - the search tree is the graph, not a log line.
-impl SearchProbe.widen(query: str, keywords: str, date_posted: str) -> SearchProbe {
+impl SearchProbe.widen(keywords: str, date_posted: str, because: str) -> SearchProbe {
     self.state = ProbeState.DRY;
     child = SearchProbe(
-        query=query,
         keywords=keywords,
         date_posted=date_posted,
+        query=keywords,
         variant=self.variant,
+        rung=self.rung + 1,
         depth=self.depth + 1,
+        move="widen",
+        reason=because,
         state=ProbeState.PENDING,
-        widened_from=self.query
+        widened_from=self.keywords
     );
-    self +>:Widened(reason="zero yield"):+> child;
+    self +>:Widened(because=because):+> child;
     return child;
 }
