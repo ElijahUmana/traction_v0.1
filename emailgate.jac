@@ -200,7 +200,13 @@ def attribution_score(email: str, login: str, name: str) -> tuple {
     local: str = email.split("@")[0].lower();
     lp: str = alpha_only(local);
     if not lp {
-        return (0.0, "empty local part");
+        # Numeric local parts are normal and legitimate - QQ Mail hands out
+        # all-digit addresses to every user in China, and plenty of people use
+        # a number they have had since school. There is simply no name signal
+        # to read, which is different from a signal that disagrees. Callers
+        # weigh this against source trust: off the person's own commits it is
+        # still their address, but a manifest file offers nothing to check.
+        return (0.0, "local part carries no name signal (numeric or symbolic address)");
     }
     best: float = 0.0;
     basis: str = "no correlation with login or profile name";
@@ -316,9 +322,27 @@ def judge_email(email: str, source: str, login: str, name: str) -> EmailVerdict 
     if conf > 0.99 {
         conf = 0.99;
     }
+    # Phrase the ledger line the way it will be read on stage. "high-trust
+    # source 2:search/commits" means nothing to a judge; "taken from commits
+    # they authored themselves" is the same fact stated so it can be checked.
+    where: str = HUMAN_SOURCE.get(source.split(":")[0], "their public GitHub data") as str;
     return EmailVerdict(ok=True, email=email, confidence=conf, attribution=attr, trust=tier,
-                        reason=f"{tier}-trust source {source}; {basis}");
+                        reason=f"{where}; {basis}");
 }
+
+
+"""Ledger-facing wording for each waterfall step. The drop ledger is shown to an
+audience, so every line has to say what was actually done, not which branch ran."""
+glob HUMAN_SOURCE: dict[str, str] = {
+    "1": "published on their own GitHub profile",
+    "2": "taken from commits they authored themselves",
+    "3": "taken from commits they authored in their own repository",
+    "4": "read from the From: header of a commit patch they signed",
+    "5a": "found in the README of their own profile repository",
+    "5b": "scraped from a file in one of their repositories",
+    "5c": "found on the personal site linked from their profile",
+    "6": "listed on their own LinkedIn contact card"
+};
 
 
 """Pick the best address from a bag of candidates harvested at one waterfall step.

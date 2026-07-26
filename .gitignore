@@ -7,3 +7,11 @@ __pycache__/
 *.pyc
 node_modules/
 .DS_Store
+
+# Screenshots of the founder's real authenticated LinkedIn feed contain third
+# parties' names, faces and posts. This repo is public; that data is not ours
+# to publish. Text proofs in evidence/ carry the evidentiary weight instead.
+evidence/*.png
+evidence/*.jpg
+evidence/*.jpeg
+evidence/*screenshot*
