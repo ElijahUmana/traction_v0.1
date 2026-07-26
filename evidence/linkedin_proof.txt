@@ -1,0 +1,31 @@
+====================================================================
+TRACTION — authenticated LinkedIn over pure-Jac CDP
+====================================================================
+
+[1] session a481f1f2-0981-4374-85dd-4272caa70d91 on context 49a94411… (persist=false, proxied)
+[2] attached to the DEFAULT page target (no Target.createTarget)
+
+[3] url   https://www.linkedin.com/feed/
+[3] title 'Feed | LinkedIn'
+[3] AUTHENTICATED=True  (nav-avatar/feed=True, wall=False)
+
+[4] accessibility tree — 759 clickable refs
+    | @e1 RootWebArea "Feed | LinkedIn"
+    |   generic
+    |     generic
+    |       @e2 heading "0 notifications"
+    |         @e3 StaticText "0 notifications"
+    |           InlineTextBox "0 "
+    |           InlineTextBox "notifications"
+    |     generic
+    |     @e4 generic "Skip navigation menu"
+    |       generic
+    |         @e5 button "Skip to search"
+    |           @e6 StaticText "Skip to search"
+
+[5] screenshot 396825 bytes -> linkedin_proof.png
+[--] session released
+
+====================================================================
+LINKEDIN_AUTH_OK=True
+====================================================================

@@ -1,0 +1,19 @@
+  ok   RFC 6455 §5.7 masked 'Hello' vector
+  ok   masking twice restores the payload
+  ok   3-byte mask rejected
+  ok   len      0  ->  marker   0, 6-byte header, MASK set, round-trips
+  ok   len      5  ->  marker   5, 6-byte header, MASK set, round-trips
+  ok   len    125  ->  marker 125, 6-byte header, MASK set, round-trips
+  ok   len    126  ->  marker 126, 8-byte header, MASK set, round-trips
+  ok   len  65535  ->  marker 126, 8-byte header, MASK set, round-trips
+  ok   len  65536  ->  marker 127, 14-byte header, MASK set, round-trips
+  ok   len 200000  ->  marker 127, 14-byte header, MASK set, round-trips
+  ok   round-trip      0 bytes  ''
+  ok   round-trip      1 bytes  'a'
+  ok   round-trip     13 bytes  'Hello, World!'
+  ok   round-trip     34 bytes  'héllo wörld — em dash & 你好'
+  ok   round-trip  70000 bytes  'xxxxxxxxxxxxxxxxxxxxxxxxxxxx…'
+  ok   empty PING frame
+
+[frames] failures=0
+[frames] FRAME_CODEC_OK=True

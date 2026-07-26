@@ -1,0 +1,53 @@
+====================================================================
+TRACTION — pure-Jac browser automation, live against Browserbase
+====================================================================
+
+[1] REST  session created        id=708abfa9-bc38-4672-bb34-cfdd9e89f18f
+[1] REST  live view              present (1 page(s))
+
+[2] WS    upgrade + masking      OK in 0.33s
+[2] WS    remote browser         Chrome/150.0.7871.125
+
+[3] CDP   attached (flatten)     sessionId=A2F499A00339F742…
+
+[4] ACT   navigate               'DuckDuckGo - Protection. Privacy. Peace of mind.'
+          readyState polled, not slept
+
+[5] ACT   snapshot_ax            1061 nodes, 385 clickable refs
+          | @e1 RootWebArea "DuckDuckGo - Protection. Privacy. Peace of mind."
+          |   generic
+          |     generic
+          |       main
+          |         generic
+          |           sectionheader
+
+[6] ACT   click_ref              clicked @e19 at (702, 479)
+
+[7] ACT   type_human             34 chars in 2.0s = 59ms/keystroke (jittered)
+
+[8] ACT   extract                now at https://duckduckgo.com/?ia=web&origin=funnel_home_websit
+          5 headings pulled from the live DOM
+          page exceptions surface as raises: True
+
+[9] ACT   screenshot             171057 bytes -> live_proof.png
+
+[10] CDP  buffered events        60 kept, 0 dropped
+          commands issued          99
+
+[--] REST session released
+
+====================================================================
+  PASS  rest
+  PASS  websocket
+  PASS  cdp_attach
+  PASS  navigate
+  PASS  snapshot_ax
+  PASS  click_ref
+  PASS  type_human
+  PASS  extract
+  PASS  error_surfacing
+  PASS  screenshot
+  PASS  cdp_events
+
+LIVE_PROOF_OK=True  (11/11)
+====================================================================

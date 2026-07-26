@@ -1,0 +1,13 @@
+  ok   wss://connect.browserbase.com?apiKey=bb_live_abc&sessionId=1f2e  ->  host=connect.browserbase.com port=443 path=/?apiKey=bb_live_abc&sessionId=1f2e
+  ok   wss://connect.browserbase.com/devtools/page/AB12?apiKey=k  ->  host=connect.browserbase.com port=443 path=/devtools/page/AB12?apiKey=k
+  ok   wss://echo.websocket.org  ->  host=echo.websocket.org port=443 path=/
+  ok   wss://echo.websocket.org/  ->  host=echo.websocket.org port=443 path=/
+  ok   ws://127.0.0.1:9222/devtools/browser/xyz  ->  host=127.0.0.1 port=9222 path=/devtools/browser/xyz
+  ok   ws://[::1]:9222/devtools/browser/xyz  ->  host=::1 port=9222 path=/devtools/browser/xyz
+  ok   wss://h.example?redirect=/a/b  ->  host=h.example port=443 path=/?redirect=/a/b
+  ok   rejected 'http://example.com': expected ws:// or wss://, got 'http':// in 'http://example.com'
+  ok   rejected 'connect.browserbase.com': not a websocket url (no scheme): 'connect.browserbase.com'
+  ok   rejected 'wss://': websocket url has no host: 'wss://'
+  ok   rejected 'wss://?a=1': websocket url has an empty host: 'wss://?a=1'
+[url] 7 parses, 4 rejections, 0 failures
+[url] URL_PARSER_OK=True
