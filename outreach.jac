@@ -14,7 +14,7 @@ carries it, and both are just walkers on the persistent graph.
 import time;
 import re;
 
-import from contracts { ReplyIntent, EvidenceSource }
+import from contracts { ReplyIntent, EvidenceSource, EvidenceKind }
 import from schema {
     Founder, Prospect, Evidence, GithubProfile, LinkedinProfile,
     EmailThread, ReplyEvent, Outreach, GotReply
@@ -103,16 +103,18 @@ def draft_outreach(
     prospect_name: str,
     prospect_headline: str,
     linkedin_quote: str,
+    linkedin_quote_source: str,
     github_artifact: str
 ) -> EmailDraft by llm();
 
-sem draft_outreach = "Write one cold email from a founder to a named engineer. You are given the exact sentence this person wrote in public and the exact artifact they built. Quote the sentence verbatim in the body and name the artifact verbatim. Do not paraphrase either one - the recipient must recognise their own words. Never write 'I came across your profile', never compliment them, never describe them as impressive. Lead with their problem, not with the product. If a field you were given is empty, do not invent a replacement and do not mention it.";
+sem draft_outreach = "Write one cold email from a founder to a named person. You are given the exact sentence this person wrote in public and the exact artifact they built. Quote the sentence verbatim in the body and name the artifact verbatim. Do not paraphrase either one - the recipient must recognise their own words. Never write 'I came across your profile', never compliment them, never describe them as impressive. Lead with their problem, not with the product. If a field you were given is empty, do not invent a replacement and do not mention it.";
 sem draft_outreach.founder_name = "Who is sending the email; sign off with this name.";
 sem draft_outreach.product_one_liner = "What the founder's product does, in one plain sentence.";
 sem draft_outreach.what_the_founder_needs = "The specific ask, e.g. three beta testers this week.";
 sem draft_outreach.prospect_name = "What the recipient is actually called. Open the email by addressing them with exactly this, never with a fuller or more formal version of it.";
 sem draft_outreach.prospect_headline = "The recipient's professional headline, for context only - do not quote it back to them.";
-sem draft_outreach.linkedin_quote = "The exact sentence the recipient wrote in public. Quote it verbatim. Empty means they have no LinkedIn evidence - then rely on the GitHub artifact alone.";
+sem draft_outreach.linkedin_quote = "The exact words the recipient wrote about themselves or their work. Quote it verbatim. Empty means they have no quotable LinkedIn evidence - then rely on the GitHub artifact alone.";
+sem draft_outreach.linkedin_quote_source = "Where those words came from, e.g. 'in their LinkedIn About section'. Attribute the quote accurately using this. NEVER describe it as a recent post unless this says it was a post - claiming to have seen a post that does not exist is the fastest way to be caught out.";
 sem draft_outreach.github_artifact = "The exact GitHub artifact the recipient built or filed. Name it verbatim. Empty means rely on the LinkedIn quote alone.";
 
 
@@ -149,23 +151,88 @@ def address_as(prospect: Prospect) -> str {
 }
 
 
-"""Best LinkedIn sentence on record for this prospect, or empty.
+obj Citation {
+    has quote: str = "";
+    has kind: str = "";
+    has attribution: str = "";
+}
 
-Longer quotes carry more signal than a three-word fragment, so among the
-evidence actually stored we take the most substantial one rather than
-whichever happened to be written first.
+
+"""How much a piece of LinkedIn evidence is worth quoting back at someone.
+
+A HEADLINE is a job title, not something a person sat down and wrote. Quoting
+"Program Manager @Oracle | UCLA Business Economics" back at someone as "you
+wrote this" is precisely the tell we are trying to avoid - it reads as a mail
+merge that found a field, not as a human who read them. So a headline scores
+zero and is never citable, even when it is the longest string on the node.
+An About section, a post and a comment are all genuinely authored, and among
+those the more substantial one carries more signal.
 """
-def best_linkedin_quote(prospect: Prospect) -> str {
-    best = "";
+def citation_rank(kind: EvidenceKind) -> int {
+    if kind == EvidenceKind.ABOUT {
+        return 3;
+    }
+    if kind == EvidenceKind.POST {
+        return 3;
+    }
+    if kind == EvidenceKind.COMMENT {
+        return 3;
+    }
+    return 0;
+}
+
+
+"""How to introduce the quote so the attribution is literally true."""
+def attribution_for(kind: EvidenceKind) -> str {
+    if kind == EvidenceKind.ABOUT {
+        return "in their LinkedIn About section";
+    }
+    if kind == EvidenceKind.POST {
+        return "in a post they wrote";
+    }
+    if kind == EvidenceKind.COMMENT {
+        return "in a comment they wrote";
+    }
+    return "";
+}
+
+
+"""Best genuinely-authored LinkedIn line for this prospect, with its provenance.
+
+Returns an empty citation when the only LinkedIn evidence is a headline, which
+correctly sends the caller to the GitHub artifact or to an outright refusal.
+"""
+def best_linkedin_citation(prospect: Prospect) -> Citation {
+    best = Citation();
+    best_score = 0;
     for ev in [prospect --> [?:Evidence]] {
         if ev.source == EvidenceSource.LINKEDIN {
+            rank = citation_rank(ev.kind);
+            if rank == 0 {
+                continue;
+            }
             quote = ev.quote.strip();
-            if len(quote) > len(best) {
-                best = quote;
+            if not quote {
+                continue;
+            }
+            score = (rank * 10000) + len(quote);
+            if score > best_score {
+                best_score = score;
+                best = Citation(
+                    quote=quote,
+                    kind=str(ev.kind),
+                    attribution=attribution_for(ev.kind)
+                );
             }
         }
     }
     return best;
+}
+
+
+"""Back-compat shim: the bare quote text, for callers that only need a string."""
+def best_linkedin_quote(prospect: Prospect) -> str {
+    return best_linkedin_citation(prospect).quote;
 }
 
 
@@ -234,6 +301,61 @@ def artifact_identifier(artifact: str) -> str {
 }
 
 
+"""Longest run of consecutive words appearing verbatim in BOTH texts."""
+def longest_verbatim_run(body_norm: str, stored_norm: str) -> int {
+    body_words = body_norm.split();
+    stored_words = stored_norm.split();
+    best = 0;
+    for i in range(len(stored_words)) {
+        for j in range(len(body_words)) {
+            run = 0;
+            while ((i + run) < len(stored_words)
+                   and (j + run) < len(body_words)
+                   and stored_words[i + run] == body_words[j + run]) {
+                run += 1;
+            }
+            if run > best {
+                best = run;
+            }
+        }
+    }
+    return best;
+}
+
+
+"""Did the email actually quote this person's words, or only paraphrase them?
+
+The check is a contiguous run of identical words, not a specific fragment, and
+that distinction is the whole point. A stored About section runs several
+sentences and opens with a self-introduction; a good email quotes the ONE
+sentence that describes the person's problem and skips "Hi, this is ...".
+A good email also trims a leading "I am" so the quote reads naturally inside
+its own sentence. Both are correct editorial choices, and both were being
+rejected by earlier versions of this check that demanded the quote begin at a
+particular place.
+
+What genuinely matters is that the words came from this human rather than from
+the model's imagination. Eight consecutive identical words cannot survive
+paraphrase and cannot occur by chance between unrelated prose, so that is the
+bar. Short stored quotes fall back to requiring the whole thing.
+"""
+def quote_is_grounded(body_norm: str, stored_quote: str) -> bool {
+    stored_norm = normalize(stored_quote);
+    if not stored_norm {
+        return False;
+    }
+    if stored_norm in body_norm {
+        return True;
+    }
+    stored_words = stored_norm.split();
+    needed = 8;
+    if len(stored_words) < needed {
+        needed = len(stored_words);
+    }
+    return longest_verbatim_run(body_norm, stored_norm) >= needed;
+}
+
+
 """Confirm the model actually used the citations it was handed.
 
 byLLM returns a well-formed EmailDraft even when the model quietly paraphrases
@@ -245,8 +367,7 @@ must not be sent.
 def citation_problem(draft: EmailDraft, linkedin_quote: str, github_artifact: str) -> str {
     body = normalize(draft.body);
     if linkedin_quote {
-        fragment = normalize(linkedin_quote)[:40];
-        if fragment and (fragment not in body) {
+        if not quote_is_grounded(body, linkedin_quote) {
             return (
                 "the LinkedIn quote from the graph does not appear verbatim in the "
                 + f"drafted body (expected to find: {linkedin_quote.strip()[:60]})"
@@ -289,6 +410,7 @@ def template_draft(
     product_one_liner: str,
     what_is_needed: str,
     linkedin_quote: str,
+    linkedin_quote_source: str,
     github_artifact: str
 ) -> EmailDraft {
     artifact_id = artifact_identifier(github_artifact);
@@ -300,7 +422,11 @@ def template_draft(
 
     parts: list[str] = [f"{called},", ""];
     if linkedin_quote {
-        parts.append(f'You wrote: "{linkedin_quote}"');
+        lead = "You wrote";
+        if linkedin_quote_source {
+            lead = f"You wrote, {linkedin_quote_source}";
+        }
+        parts.append(f'{lead}: "{linkedin_quote}"');
         parts.append("");
     }
     if github_artifact {
@@ -464,7 +590,8 @@ async walker:pub ComposeOutreach(ProspectLookup) {
             disengage;
         }
 
-        linkedin_quote = best_linkedin_quote(here);
+        citation = best_linkedin_citation(here);
+        linkedin_quote = citation.quote;
         github_artifact = best_github_artifact(here);
 
         if (not linkedin_quote) and (not github_artifact) {
@@ -474,9 +601,10 @@ async walker:pub ComposeOutreach(ProspectLookup) {
                 "prospect": here.name,
                 "prospect_id": jid(here),
                 "reason": (
-                    "refusing to compose: the graph holds no exact LinkedIn quote and "
-                    + "no exact GitHub artifact for this prospect, so any email would be "
-                    + "generic. Run cross-linking first."
+                    "refusing to compose: the graph holds nothing this person actually "
+                    + "wrote and no GitHub artifact they built, so any email would be "
+                    + "generic. A headline on its own does not count - it is a job title, "
+                    + "not something they said."
                 )
             };
             disengage;
@@ -495,6 +623,7 @@ async walker:pub ComposeOutreach(ProspectLookup) {
                 called,
                 here.headline,
                 linkedin_quote,
+                citation.attribution,
                 github_artifact
             );
         } except Exception as e {
@@ -510,6 +639,7 @@ async walker:pub ComposeOutreach(ProspectLookup) {
                 founder["one_liner"],
                 founder["needs"],
                 linkedin_quote,
+                citation.attribution,
                 github_artifact
             );
         }
@@ -547,6 +677,7 @@ async walker:pub ComposeOutreach(ProspectLookup) {
             "subject": draft.subject,
             "body": draft.body,
             "linkedin_quote": linkedin_quote,
+            "linkedin_quote_kind": citation.kind,
             "github_artifact": github_artifact,
             "source": source,
             "degraded_reason": degraded_reason
