@@ -14,31 +14,51 @@ or point at the wrong line**, which is what makes them expensive.
 These produce incorrect behaviour with a clean `jac check`. They are the reason
 this file exists.
 
-### 0.1 ⛔ NEVER name a walker field `reports`
+### 0.1 A walker field named `reports` silently discards MANUAL appends
 
-`has reports: list[T] = [];` **silently collects nothing.** The name collides
-with the walker's built-in report channel. No error, no warning, empty list.
+**Scope corrected after re-measuring — read the boundary, it is narrower than
+the original warning in this file.**
+
+`has reports: list[T] = [];` collides with the walker's built-in report channel.
+What that does depends entirely on how you write to it:
 
 ```jac
-walker WA { has found: list[str] = [];    ... self.found.append(here.name);   }  # ✅ ['a','b']
-walker WB { has reports: list[str] = [];  ... self.reports.append(here.name); }  # ❌ []  <- silent
-walker WC { ...                                report here.name;             }  # ✅ ['a','b']
+# A - has reports + the BUILT-IN report statement          ✅ WORKS
+walker A { has reports: list[dict] = [];
+    can hit with P entry { report {"n": here.name}; } }
+
+# B - has reports + MANUAL append                          ❌ SILENTLY LOST
+walker B { has reports: list[dict] = [];
+    can hit with P entry { self.reports.append({"n": here.name}); } }
+
+# C - both                                                 ⚠️ manual ones VANISH
+walker C { has reports: list[dict] = [];
+    can hit with P entry { self.reports.append({"manual": ...}); report {"builtin": ...}; } }
+```
+Measured:
+```
+A  report-stmt only : [{'n': 'a'}, {'n': 'b'}]      ✅
+B  manual append    : []                            ❌ no error, no warning
+C  both             : [{'builtin': 'a'}, {'builtin': 'b'}]   manual entries gone
 ```
 
-Verified output:
-```
-WA custom-field  -> ['a', 'b']
-WB named-reports -> []          <- appends go nowhere
-WC report-stmt   -> ['a', 'b']
-```
+**The rule:**
+- Using the built-in `report x;` statement → declaring `has reports` is harmless
+  dead weight. It reads back correctly. **Nothing to fix.**
+- Using `self.reports.append(...)` as a manual accumulator → **your data is
+  silently discarded.** Rename the field (`found`, `picked`, `collected`) or
+  switch to `report x;`.
+- Mixing both is the worst case: the built-in entries survive and the manual
+  ones disappear, so the list looks populated and is quietly incomplete.
 
-**Do one of these instead:**
-- use the built-in `report x;` statement and read `result.reports`, or
-- name your typed accumulator anything else — `found`, `picked`, `collected`.
+This repo has 14 `has reports` declarations across identity/outreach/voice/
+research/githublane/rehearsal. **All 14 are the safe form** — audited with
+`grep -rn 'self\.reports\.append\|self\.reports\s*='`, zero hits. They are
+redundant, not broken; leave them alone rather than churning six files.
 
-> Supersedes the earlier team guidance to declare `has reports: list[T] = [];`
-> as the typed report channel. The `= []` half of that advice is right (see 0.2);
-> the *name* is not.
+> An earlier revision of this entry said "NEVER name a walker field `reports`"
+> and implied every such walker was broken. That was over-broad. The
+> distinguishing factor is the manual append, not the name.
 
 ### 0.2 Omitting `= []` on a walker list makes it a REQUIRED spawn parameter
 
