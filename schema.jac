@@ -125,10 +125,10 @@ node Prospect {
     has score: float = 0.0;
     has score_pre_crosslink: float = 0.0;
     has dropped_reason: str = "";
-    has is_warm_lead: bool = False;
 
     def convergence_lanes -> list[LaneId];
     def is_converged -> bool;
+    def is_warm_lead -> bool;
     def strong_evidence(min_confidence: float) -> list[Evidence];
     def github -> GithubProfile | None;
     def linkedin -> LinkedinProfile | None;
@@ -289,6 +289,12 @@ impl Prospect.convergence_lanes -> list[LaneId] {
     return lanes;
 }
 
+# Warm-lead status is DERIVED from the HasWarmLead edge, never stored. One
+# source of truth, nothing to keep in sync.
+impl Prospect.is_warm_lead -> bool {
+    return len([self <-:HasWarmLead:<-]) > 0;
+}
+
 # True when two or more lanes found this person without knowing about each other.
 impl Prospect.is_converged -> bool {
     return len(self.convergence_lanes()) >= 2;
@@ -339,7 +345,7 @@ impl Prospect.to_view -> ProspectView {
         score=self.score,
         score_pre_crosslink=self.score_pre_crosslink,
         dropped_reason=self.dropped_reason,
-        is_warm_lead=self.is_warm_lead,
+        is_warm_lead=self.is_warm_lead(),
         convergence_lanes=self.convergence_lanes(),
         linkedin_quote=li_quote,
         github_artifact=gh_artifact

@@ -205,7 +205,6 @@ test "warm lead is a first-class prospect on Lane W, exempt from the email gate"
 
     warm = Prospect(name="Marek K", handle="marek-k");
     warm.linkedin_url = "https://linkedin.com/in/marek-k";
-    warm.is_warm_lead = True;
     warm.email = "marek@teammate.dev";
     warm.email_source = EmailSource.PROVIDED;
     warm.email_confidence = 1.0;
@@ -219,11 +218,13 @@ test "warm lead is a first-class prospect on Lane W, exempt from the email gate"
 
     assert len([founder ->:HasWarmLead:->]) == 1, "HasWarmLead did not traverse";
     fetched = [founder ->:HasWarmLead:->][0];
-    assert fetched.is_warm_lead, "warm lead flag lost";
+    assert fetched.is_warm_lead(), "warm lead must be derived from the HasWarmLead edge";
     assert fetched.email_source == EmailSource.PROVIDED, "warm lead email must short-circuit the waterfall";
     assert run.lane(LaneId.W) is not None, "Lane W is not a first-class lane";
     assert LaneId.W in warm.convergence_lanes(), "Lane W did not register as a surfacing lane";
     assert warm.to_view().is_warm_lead, "view lost the warm-lead flag";
+    cold = [founder ->:Runs:-> ->:HasLane:-> ->:Surfaced:->][0];
+    assert not cold.is_warm_lead(), "a lane-surfaced prospect must NOT read as a warm lead";
 }
 
 test "dry probe widens into a child and the search tree stays inspectable" {
