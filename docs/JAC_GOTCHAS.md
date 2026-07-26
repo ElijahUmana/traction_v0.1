@@ -222,6 +222,35 @@ the graph rather than that a local variable still holds what you just put in it.
 
 ## 7. Server / endpoints
 
+### ⛔ 401 vs 405 tells you WHICH of the two wiring bugs you have
+
+Verified against the live server — memorise this, it saves the whole diagnosis:
+
+| Response to an anonymous `POST /walker/<Name>` | Meaning | Fix |
+|---|---|---|
+| **405** Method Not Allowed | The name is **not in `main.jac`'s import registry** at all. Not routed. | Add the name to an `import from <mod> { ... }` block in `main.jac` |
+| **401** Unauthorized | Registered and routed, but declared plain `walker` instead of `walker:pub`. Plain walkers require a JWT. | Change `walker X` → `walker:pub X` |
+| **500** | Routed AND public. It ran and failed on missing required args — this is the healthy state for a bare `{}` probe. | Nothing; pass real args |
+
+Measured on this project, all three states at once:
+```
+405  /walker/RunResearch          <- module not in main.jac registry
+401  /walker/RankAndSelect        <- plain walker, needs :pub
+401  /walker/ResolveEmail         <- plain walker, needs :pub
+500  /walker/ComposeOutreach      <- correct: walker:pub + registered
+```
+
+**Why plain `walker` is not merely an auth annoyance:** an anonymous
+`walker:pub` call runs on the **shared guest graph** (`root.shared`), whereas a
+plain/`:priv` walker runs on the **caller's own isolated root**. Mixing the two
+in one product splits the graph in half — the browsers write to one root and
+the voice agent reads from another, and nothing errors. If the demo is
+unauthenticated, **every** endpoint on the critical path must be `:pub`.
+
+Verified the shared path is consistent: an anonymous `walker:pub` write
+(`SeedRehearsalRun`) was read back by an anonymous `def:pub` read
+(`get_run_state`) — same run id, four lanes. So `:pub` end-to-end works.
+
 1. **404 or 405 on a new endpoint = its name is missing from `main.jac`'s import list.**
    Registration tracks the exact *name*, not the module (jaseci-labs/jac#7695).
    Adding a `def:pub` to a module `main.jac` already imports still 405s until the
@@ -254,6 +283,43 @@ filter passes four dead addresses per pool and reports them as successes.
 *(GHIDENT, measured on a live 15-candidate pool.)*
 
 ---
+
+## 8b. Graph reads that silently under-count
+
+`[root --> [?:ResearchRun]]` returns **0** in this project even when a run
+exists, because runs hang off `Founder`, not off `root`. A "count the nodes"
+health check must TRAVERSE:
+
+```jac
+founders = [root --> [?:Founder]];
+runs     = [founders ->:Runs:->];          # anchor may be a LIST of nodes
+lanes    = [runs ->:HasLane:->];
+```
+This bit `graph_health` — it reported `runs: 0, lanes: 0` while `get_run_state`
+simultaneously reported a live run with four lanes. Anything that looks like a
+"total" is suspect unless it follows the edges. Dedupe multi-source unions by
+`jid(n)`, since a prospect can be reachable by several paths.
+
+## 8c. printgraph in tests
+
+`printgraph(root)` works at runtime (verified: renders SearchProbe/Widened) but
+throws `NodeAnchor ... is not a valid reference` under `jac test`'s parallel
+workers. Demo it in a `jac run`; never assert on it in a test.
+
+## 8d. Archetypes belong to schema.jac ONLY
+
+Declaring a `node` or `edge` locally instead of importing it from `schema.jac`
+creates a SECOND archetype with the same name. The types are distinct, but
+**edge traversal matches by NAME at runtime**, so `[lane ->:Probe:->]` returns a
+mixture of both and reads of a field only one of them has raise at run time.
+`jac check` passes on both files, because each module resolves its own
+declaration in its own scope. Measured:
+```
+SearchProbe same type?  False
+Probe edge same type?   False
+lane.probes() after one probe from each module: 2   <- both, incompatible
+```
+If you need a node or edge, add it to `schema.jac` — never declare it locally.
 
 ## 9. Stale state
 
