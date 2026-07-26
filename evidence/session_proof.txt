@@ -1,0 +1,34 @@
+========================================================================
+BrowserSession — live, authenticated, and concurrent
+========================================================================
+
+--- A. single session, full surface ---
+  session_id  02e26254-9cae-47d1-bf3c-e8e3fbcb40c8
+  live_url    CAPTURED at open
+  goto        -> True   title='Feed | LinkedIn'
+  wait_for    -> True
+  eval_json   -> 61 profile links
+  eval_js     -> {"ok": true, "n": 15}  (str)
+  text        -> 11168 chars of visible text
+[session] 02e26254 goto(https://this-host-does-not-exist-jaccdp.invalid/) FAILED: navigation to https://this-host-does-not-exist-jaccdp.invalid/ failed: net::ERR_TUNNEL_CONNECTION_FAILED
+  goto(bad)   -> False  (returned False, did not raise)
+  close       -> socket closed + session released
+
+--- B. THREE concurrent lanes (flow) ---
+  lane A   14.2s  auth=Y  path=/search/results/people links= 30  cdp_msgs=21
+           sample: ['Charan Ravindra ', 'Charan Ravindra', 'Tanmay Maka']
+  lane B   14.4s  auth=Y  path=/feed/                 links= 39  cdp_msgs=18
+           sample: ['Elijah Umana', 'Uber', 'Eric HUANG LIN']
+  lane C   12.6s  auth=Y  path=/mynetwork/grow/       links= 10  cdp_msgs=17
+           sample: ['Bereket Belachew Bogale', 'Janvika Jetavat', 'Vratika Chandnani'
+
+  wall clock for 3 lanes      16.0s
+  distinct sessions           True
+  all authenticated           True
+  all captured live_url       True
+  none bounced to a wall      True
+
+========================================================================
+SESSION_FACADE_OK=True
+CONCURRENT_LANES_OK=True
+========================================================================
