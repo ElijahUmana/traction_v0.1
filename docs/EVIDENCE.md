@@ -6,7 +6,7 @@
 
 **Where a raw number is flattering but not defensible, this file reports the validated number and shows the gap.** A judge who spot-checks one inflated figure stops believing the rest of the document.
 
-§9 lists what is **not** proven, and §10 lists an **open defect that blocks the demo**.
+§10 lists what is **not** proven, and §11 lists an **open defect that blocks the demo**.
 
 ---
 
@@ -142,23 +142,76 @@ Enum serialization verified live — enums arrive as their **value**, not their 
 
 ## 6. Vapi tunnel
 
-**Status: PROVEN on venue-class wifi. Hotspot re-test NOT DONE.** Log: `/tmp/traction-cfd-test.log`.
-
-Run 2026-07-26 15:31 PDT — 3.5 h ahead of the 2 PM deadline in the risk register:
+**Status: PROVEN — the tunnel carries real POST callbacks. Hotspot re-test NOT DONE.**
+Artifacts: `evidence/tunnel_proof_wifi.log`, `evidence/tunnel_proof.log`. Reproduce: `ops/tunnel.sh` (`NETWORK=hotspot ops/tunnel.sh` for the other network).
 
 | Check | Result |
 |---|---|
-| Public URL issued | `https://valves-signs-north-southern.trycloudflare.com` |
-| External **GET** | **200**, 0.459 s |
-| External **POST** with a JSON body | **reached the local server** — the 501 came from python's `http.server` refusing POST, i.e. method *and* body forwarded correctly |
-| Egress IP | `12.125.194.54` |
-| Edge | `sjc01`, QUIC |
+| Public URL issued | e.g. `https://christmas-linux-camera-illustrations.trycloudflare.com` |
+| External **GET** `/healthz` through the tunnel | **200** |
+| External **POST** `/function/get_run_state` with a JSON body | **200** — verified against a healthy server at 16:47 PDT |
+| External POST while the origin is down | **502** — correct tunnel behaviour, and a useful negative control |
+| Egress IP / edge | `12.125.194.54`, `sjc07` / `sjc11`, QUIC |
 
-> **Two caveats that matter operationally.** The risk register calls the **hotspot PRIMARY**; this ran on current wifi and the hotspot check has not been done. And quick-tunnel hostnames **change on every restart**, so Vapi's Custom Tool and Knowledge Base URLs must be re-pointed after any tunnel restart.
+An earlier run (15:31 PDT, 3.5 h ahead of the register's 2 PM deadline) proved the same POST path against a stand-in origin: python's `http.server` returned **501**, which is precisely the evidence that method *and* body forwarded — a 200 on a GET alone would not have been.
+
+### 6.1 ⚠️ The local resolver cannot see `*.trycloudflare.com` — and it looks exactly like a dead tunnel
+
+**Measured on this network.** The DHCP nameserver (`10.104.0.1`) returns NXDOMAIN for the quick-tunnel hostname:
+
+```
+$ curl https://<host>.trycloudflare.com/healthz
+curl: (6) Could not resolve host: <host>.trycloudflare.com
+
+$ curl --doh-url https://1.1.1.1/dns-query https://<host>.trycloudflare.com/healthz
+200
+```
+
+`dig @1.1.1.1` resolves it fine (`104.16.230.132`), and the tunnel is fully registered at the Cloudflare edge.
+
+**This is the venue-wifi failure mode in the risk register, and it is a trap.** The tunnel is HEALTHY and reachable by Vapi — Vapi's servers use their own resolvers, not ours. But anyone who curls the URL from this laptop sees "Could not resolve host" and concludes the tunnel is dead, at exactly the moment there is no time to debug it.
+
+`ops/tunnel.sh` therefore verifies over DNS-over-HTTPS (`--doh-url https://1.1.1.1/dns-query`), which tests what Vapi actually experiences, and records the local resolver's state separately as information rather than as a verdict.
+
+> **Two operational caveats.** The register calls the **hotspot PRIMARY** and the hotspot check has still not been run. And quick-tunnel hostnames **change on every restart** — `ops/tunnel.sh` now reuses a live tunnel rather than churning, because every new hostname must be re-pointed in Vapi's dashboard.
 
 ---
 
-## 7. Test suite
+## 7. ⚠️ The guest-root corruption is PERSISTENT — and it conflicts with the pre-warm plan
+
+**Status: ROOT-CAUSED. This is the most operationally dangerous thing in this document.**
+
+Once the guest root is lost, every anonymous endpoint returns 500 forever:
+
+```
+Guest root anchor 449d29b5ca4944a7bfe6ace00d1959d2 is missing from the
+anchor store; minting a fresh guest root.
+  -> 'JacScaleUserManager' object has no attribute '_lock'   (HTTP 500)
+```
+
+**The corruption is written into `.jac/data/anchor_store.db` and SURVIVES A RESTART.** Measured back to back:
+
+| Action | Result |
+|---|---|
+| `ops/restart.sh` (keeps `.jac/data`) | **500 500 500** — the same dead anchor id is re-read every request |
+| `ops/restart.sh --clean` (wipes `.jac/data`) | **200 200 200 200 200** |
+
+Restarting the process is **not** a fix. The only fix found is wiping the graph.
+
+### Why this matters more than it looks
+
+§6 of the master plan resolves the 4-minute-slot problem with **pre-warm**: the research run starts off-stage and the demo opens mid-flight. If the guest root corrupts during that pre-warm window, **the only known recovery destroys the pre-warmed run** — the thing the demo depends on.
+
+Earlier measurements show it is not cold start (3/3 clean cold starts) and not ordinary load (15 rapid anonymous writes + 5 reads, all 200, zero remint events). It appeared reliably once many modules and multiple concurrent operators were in play.
+
+**Mitigations, in order of preference:**
+1. **Snapshot `.jac/data` immediately after a good pre-warm** (`cp -r .jac/data .jac/data.warm`). Recovery then becomes restore-and-restart instead of wipe-and-lose.
+2. Run the demo server on a **dedicated port with a dedicated data dir**, so nobody else's `pkill -f "jac start"` or `--clean` can touch it. Multiple operators sharing one server and one data dir is what surfaced this.
+3. Treat any 500 with `_lock` in it as "restore the snapshot", never as "restart and hope".
+
+---
+
+## 8. Test suite
 
 **Status: GREEN — 20/20, with no API key set.**
 
@@ -182,7 +235,7 @@ The 2 failures that survived the worker fix were a real bug: `feed.jac` does not
 
 ---
 
-## 8. Jac percentage audit
+## 9. Jac percentage audit
 
 **Status: PASSED — 97.12%, target >85%.** Reproduce: `ops/jac_audit.sh`
 
@@ -200,18 +253,19 @@ Counted over `git ls-files`, so ignored, vendored and generated files cannot inf
 
 ---
 
-## 9. What is NOT proven
+## 10. What is NOT proven
 
 Stated plainly, because the evidence standard here is absolute.
 
 - **The joined-up live E2E chain** — real lanes → real prospect → real email → real reply → real Vapi call → real Calendar booking — **has not been run end to end.** Segments have strong individual proofs (§1, §2, §3); the joined-up artifact does not exist. `PlanCampaign` was missing as of this writing and `RunResearch` raises without an ICP, so the Go button was routed but not runnable.
 - **The mobile-hotspot tunnel test** (§6) has not been run, and the register calls the hotspot primary.
+- **No fix exists for the persistent guest-root corruption** (§7) beyond wiping the graph. The snapshot mitigation is proposed, not yet exercised.
 - **No browser client has rendered these endpoints.** The frontend contract is verified at the wire level only.
 - **Lane D's ~40%** (§2) is my adversarial read of the artifact, not an independently re-run deliverability check. No address was SMTP-verified.
 
 ---
 
-## 10. ⚠️ OPEN DEFECT — blocks the demo
+## 11. ⚠️ OPEN DEFECT — blocks the demo
 
 **Lane W bound the wrong person's email to a prospect's identity and evidence.** Artifact: `evidence/lane_w_proof.txt`.
 

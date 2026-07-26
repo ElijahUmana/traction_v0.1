@@ -1,0 +1,22 @@
+====================================================================
+TRACTION - Vapi tunnel proof
+====================================================================
+captured    : 2026-07-26 16:49:30 PDT
+network     : wifi
+public url  : https://christmas-linux-camera-illustrations.trycloudflare.com
+egress ip   : 12.125.194.54
+cf edge     : location=sjc07
+local dns   : resolves
+
+external GET  /healthz            -> 200  (1.638824s)
+external POST /function/get_run_state -> 500
+POST body round-tripped envelope  -> NO
+
+response body (first 300 chars):
+Internal Server Error
+
+
+TUNNEL_CARRIES_VAPI_CALLBACKS = False
+
+NOTE: quick-tunnel hostnames change on every restart.
+      Re-point Vapi's Custom Tool + Knowledge Base URLs to the host above.
