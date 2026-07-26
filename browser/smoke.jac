@@ -8,10 +8,12 @@ with entry {
     print("[smoke] creating session...");
     sess = bb.create_session();
     sid = sess["id"];
-    connect_url = sess["connectUrl"];
+    connect_url: str = sess["connectUrl"];
     print(f"[smoke] session={sid}");
     # Print the shape, never the key.
-    print(f"[smoke] connectUrl host-part={connect_url.split('?')[0]} query_params={len(connect_url.split('?')[1].split('&')) if '?' in connect_url else 0}");
+    parts: list[str] = connect_url.split("?");
+    n_params = len(parts[1].split("&")) if len(parts) > 1 else 0;
+    print(f"[smoke] connectUrl host-part={parts[0]} query_params={n_params}");
 
     try {
         print("[smoke] opening wss (pure-Jac TLS websocket)...");

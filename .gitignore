@@ -15,3 +15,8 @@ evidence/*.png
 evidence/*.jpg
 evidence/*.jpeg
 evidence/*screenshot*
+
+# Screenshots of a real authenticated LinkedIn feed contain third parties'
+# names and posts. This is a public repo; their data is not ours to publish.
+evidence/linkedin_proof.png
+evidence/*_authenticated*.png
