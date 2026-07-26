@@ -292,7 +292,15 @@ walker ResolveEmail {
     can gate with Prospect entry {
         # A warm lead arrives with a known-good address. Re-deriving it would
         # risk overwriting a correct value with a worse guess.
-        if here.is_warm_lead and here.email {
+        #
+        # The parens on is_warm_lead() are load-bearing. It became a method when
+        # warm-lead status moved to being derived from the HasWarmLead edge, and
+        # a bare method reference is ALWAYS TRUTHY - so `if here.is_warm_lead`
+        # sent every prospect that already had an email address down this
+        # short-circuit, skipping the entire six-step waterfall and, worse, the
+        # attribution floor that stops us emailing the upstream author of a
+        # forked repo. It reads correctly and `jac check` says nothing.
+        if here.is_warm_lead() and here.email {
             here.email_confidence = 1.0;
             here.email_source = EmailSource.PROVIDED;
             self.resolved += 1;
