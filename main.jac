@@ -41,7 +41,10 @@ import from schema {
 }
 
 # --- teammate endpoint modules are imported here as they land ---------------
-# import from research { RunResearch, LinkedInLane, PlanCampaign }
+import from research {
+    RunResearch, LinkedInLane, LaneA, LaneB, LaneC,
+    LaneResult, LaneSpec, CommentVerdict
+}
 import from githublane { GithubLane }
 import from identity { CrossLinkToGithub, CrossLinkToLinkedIn, ResolveEmail, RankAndSelect }
 import from outreach { ComposeOutreach, SendOutreach, OnEmailReply }

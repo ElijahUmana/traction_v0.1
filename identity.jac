@@ -491,14 +491,25 @@ walker CrossLinkToGithub {
             return {"matched": False, "login": login,
                     "basis": f"github.com/{login} referenced in {where} but the account does not resolve"};
         }
-        gname: str = r.data.get("name", "") as str;
-        company: str = r.data.get("company", "") as str;
-        name_match = attribution_score(f"{login}@x.com", login, p.name);
-        name_sim: float = name_match[0] as float;
+        gname: str = (r.data.get("name", "") as str) or "";
+        company: str = (r.data.get("company", "") as str) or "";
+
+        # Compare the GITHUB side against the LINKEDIN side. Both comparisons
+        # pass "" as the login argument on purpose: `attribution_score` scores a
+        # local part against BOTH the login and the name it is handed and keeps
+        # the better one, so passing the github login as both the subject AND
+        # the target scores it against itself and returns 1.00 for everybody.
+        # That bug cross-linked github.com/torvalds to a prospect named "Jane
+        # Unrelated" with "similarity 1.00" - caught by the negative control in
+        # proof_laned.jac. It is the exact false-attribution failure this whole
+        # module exists to prevent, so the two sides are now named explicitly.
+        by_login = attribution_score(f"{login}@x.invalid", "", p.name);
+        name_sim: float = by_login[0] as float;
         if gname {
-            alt = attribution_score(f"{gname.replace(' ', '')}@x.com", "", p.name);
-            if (alt[0] as float) > name_sim {
-                name_sim = alt[0] as float;
+            flat: str = gname.replace(" ", "").replace(".", "");
+            by_display = attribution_score(f"{flat}@x.invalid", "", p.name);
+            if (by_display[0] as float) > name_sim {
+                name_sim = by_display[0] as float;
             }
         }
 

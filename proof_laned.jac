@@ -19,7 +19,7 @@ import from time { time }
 import from contracts { LaneId, LaneState, CompletenessTier }
 import from schema { Founder, ICP, ResearchRun, Lane, Prospect, Runs, HasLane, Targets }
 import from githublane { GithubLane }
-import from identity { ResolveEmail, RankAndSelect }
+import from identity { ResolveEmail, RankAndSelect, CrossLinkToGithub, CrossLinkToLinkedIn }
 import from gh { gh }
 
 
@@ -72,6 +72,37 @@ with entry:__main__ {
             mark: str = "KEEP" if (row.get("kept", False) as bool) else "DROP";
             handle: str = row.get("handle", "") as str;
             print(f"  [{mark}] {handle:<22} {(row.get('email','') as str):<34} {row.get('why','')}");
+        }
+
+        print("\n--- CROSS-LINK: LinkedIn -> GitHub (the HEAVY direction) ------------");
+        # Simulates what Lanes A/B/C hand over: raw text already scraped from a
+        # LinkedIn profile. No browser is driven here on purpose - the lanes own
+        # the Browserbase session, so this walker takes text and stays testable.
+        xl_target: Prospect = (root ++> Prospect(
+            name="Simon Willison", handle="simonw-linkedin",
+            linkedin_url="https://linkedin.com/in/simonw"
+        )) as Prospect;
+        xl = xl_target spawn CrossLinkToGithub(
+            contact_info_text="Websites: simonwillison.net · GitHub: https://github.com/simonw",
+            about_text="I build open source tools for data journalism.",
+            posts_text="",
+            linkedin_company="Datasette"
+        );
+        for v in xl.reports {
+            print(f"  matched={v.get('matched')}  login={v.get('login')}  tier={v.get('tier')}");
+            print(f"  basis : {v.get('basis')}");
+        }
+
+        print("\n  negative control - a github link that is NOT this person:");
+        xl_bad: Prospect = (root ++> Prospect(
+            name="Jane Unrelated", handle="jane-unrelated"
+        )) as Prospect;
+        xl2 = xl_bad spawn CrossLinkToGithub(
+            posts_text="Great work by github.com/torvalds on this release!",
+            linkedin_company=""
+        );
+        for v in xl2.reports {
+            print(f"  matched={v.get('matched')}  basis: {v.get('basis')}");
         }
 
         print("\n--- RANK AND SELECT -------------------------------------------------");
