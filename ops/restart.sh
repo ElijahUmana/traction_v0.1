@@ -53,8 +53,13 @@ echo "==> starting"
 #     looks perfectly healthy. That failure is invisible until a walker quietly
 #     produces nothing.
 #  2. `jac start` exits on stdin EOF. `< /dev/null` therefore serves fine for a
-#     while and then logs `drain: started` and dies mid-session. `sleep infinity |`
-#     holds stdin open for the life of the process.
+#     while and then logs `drain: started` and dies mid-session. Something must
+#     hold stdin open for the life of the process.
+#
+#     NOT `sleep infinity` - that is a GNU extension. macOS BSD sleep rejects it
+#     ("usage: sleep number[unit]") and exits IMMEDIATELY, which closes the pipe
+#     and reproduces the exact death it was meant to prevent, just as silently.
+#     `tail -f /dev/null` is portable and actually blocks.
 #
 # Do not "simplify" either half of this.
 if [ -f ./.env ]; then
@@ -70,7 +75,7 @@ else
   echo "    !! WARNING: no .env found - every by llm() call will return null"
 fi
 
-nohup sh -c "sleep infinity | jac start main.jac --no-client -p $PORT" \
+nohup sh -c "tail -f /dev/null | jac start main.jac --no-client -p $PORT" \
   > "$LOG" 2>&1 &
 
 for i in $(seq 1 90); do

@@ -204,10 +204,34 @@ Restarting the process is **not** a fix. The only fix found is wiping the graph.
 
 Earlier measurements show it is not cold start (3/3 clean cold starts) and not ordinary load (15 rapid anonymous writes + 5 reads, all 200, zero remint events). It appeared reliably once many modules and multiple concurrent operators were in play.
 
-**Mitigations, in order of preference:**
-1. **Snapshot `.jac/data` immediately after a good pre-warm** (`cp -r .jac/data .jac/data.warm`). Recovery then becomes restore-and-restart instead of wipe-and-lose.
-2. Run the demo server on a **dedicated port with a dedicated data dir**, so nobody else's `pkill -f "jac start"` or `--clean` can touch it. Multiple operators sharing one server and one data dir is what surfaced this.
-3. Treat any 500 with `_lock` in it as "restore the snapshot", never as "restart and hope".
+### The recovery path — built and DRILLED, not proposed
+
+`ops/warm.sh` turns "wipe and lose the pre-warm" into "restore and keep it". Full drill, run end to end:
+
+| Step | Result |
+|---|---|
+| baseline after seeding | `exists=True, lane_count=4, prospect_count=3, reasoning_count=6` |
+| `ops/warm.sh save` | snapshot taken, **health-checked at 200 before saving** |
+| corrupt (remove `anchor_store.db` under the live server) | **500 500 500** |
+| `ops/warm.sh restore` | **200 200 200 200 200** |
+| **graph after restore** | **`lane_count=4, prospect_count=3, reasoning_count=6` — the pre-warm survived intact** |
+
+`save` refuses to snapshot a graph that is not already answering 200, so a corrupt state cannot be preserved and silently restored later.
+
+**Also do:** run the demo server on a **dedicated port and data dir**. Every operator's `pkill -f "jac start"` currently kills everyone's server, and any `--clean` wipes everyone's graph. That contention is very likely what surfaced this at all — it was 3/3 clean on cold starts and 20/20 clean under load with a single operator.
+
+### 7.1 `sleep infinity` is a GNU extension and silently kills the server on macOS
+
+The canonical launch line needs something holding stdin open, because `jac start` exits on EOF. **`sleep infinity` is not that something on macOS:**
+
+```
+$ sleep infinity
+usage: sleep number[unit] [...]
+```
+
+BSD `sleep` rejects it and exits **immediately**, closing the pipe and causing the exact mid-session death it was meant to prevent — silently, and minutes later, so it reads as an unrelated crash. This cost real time today: servers kept dying under measurement and it looked like contention.
+
+Use `tail -f /dev/null | jac start …`, which is portable and actually blocks. `ops/restart.sh` does this.
 
 ---
 
