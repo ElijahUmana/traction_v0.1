@@ -12,6 +12,7 @@ carries it, and both are just walkers on the persistent graph.
 """
 
 import time;
+import re;
 
 import from contracts { ReplyIntent, EvidenceSource }
 import from schema {
@@ -19,6 +20,7 @@ import from schema {
     EmailThread, ReplyEvent, Outreach, GotReply
 }
 import from svc { agentmail_base, agentmail_inbox, agentmail_headers, http_json, cfg }
+import from emailgate { check_identity }
 
 import from jaclang.byllm.lib { Model }
 
@@ -264,6 +266,118 @@ def citation_problem(draft: EmailDraft, linkedin_quote: str, github_artifact: st
 }
 
 
+
+# ===========================================================================
+# DEGRADED PATHS - what happens when the model is unreachable
+# ===========================================================================
+# An LLM outage is an INFRASTRUCTURE failure. Missing evidence is a DATA
+# failure. They are not the same thing and must not be handled the same way:
+# the evidence gate below still refuses outright, because an email with nothing
+# specific to say is worse than no email. But a rate limit or a transient 529
+# is no reason to abandon a prospect whose exact words we are already holding.
+#
+# So the degraded email is still genuinely personal - it quotes the same
+# verbatim sentence and names the same artifact the model would have been given.
+# Only the prose around the citations is mechanical. Every degraded result is
+# labelled `source` and carries the failure reason, so it can never be mistaken
+# for a model-written one on the dashboard.
+
+"""Build a cited email without the model. Citations are guaranteed by construction."""
+def template_draft(
+    called: str,
+    founder_name: str,
+    product_one_liner: str,
+    what_is_needed: str,
+    linkedin_quote: str,
+    github_artifact: str
+) -> EmailDraft {
+    artifact_id = artifact_identifier(github_artifact);
+
+    subject = "The problem you described";
+    if artifact_id {
+        subject = f"{artifact_id} and the problem you described";
+    }
+
+    parts: list[str] = [f"{called},", ""];
+    if linkedin_quote {
+        parts.append(f'You wrote: "{linkedin_quote}"');
+        parts.append("");
+    }
+    if github_artifact {
+        parts.append(f"You also built {github_artifact}, so you have hit this first hand.");
+        parts.append("");
+    }
+    if product_one_liner {
+        parts.append(product_one_liner);
+        parts.append("");
+    }
+    if what_is_needed {
+        parts.append(f"I am looking for {what_is_needed}.");
+    }
+    parts.append("Would a 20-minute call this week work?");
+    parts.append("");
+    parts.append(founder_name);
+
+    return EmailDraft(
+        subject=subject,
+        body="\n".join(parts),
+        linkedin_quote_used=linkedin_quote,
+        github_artifact_used=github_artifact
+    );
+}
+
+
+"""Read a reply without the model: explicit phone extraction, conservative intent.
+
+Deliberately biased toward UNCLEAR. Guessing WANTS_CALL wrongly would place a
+real phone call to someone who did not agree to one, which is a far worse
+failure than making a human press the button themselves.
+"""
+def fallback_reply_read(text: str) -> ReplyRead {
+    lowered = text.lower();
+
+    digits = re.findall(r"[+]?[0-9][0-9()\-.\s]{8,}[0-9]", text);
+    phone = "";
+    for candidate in digits {
+        cleaned = re.sub(r"[^0-9+]", "", candidate);
+        if len(re.sub(r"[^0-9]", "", cleaned)) >= 10 {
+            if not cleaned.startswith("+") {
+                bare = re.sub(r"[^0-9]", "", cleaned);
+                cleaned = "+1" + bare if len(bare) == 10 else "+" + bare;
+            }
+            phone = cleaned;
+            break;
+        }
+    }
+
+    negative = ["not interested", "no thanks", "unsubscribe", "stop emailing", "remove me"];
+    for marker in negative {
+        if marker in lowered {
+            return ReplyRead(
+                intent_label="not_interested", wants_call=False,
+                phone_number=phone, sentiment="negative"
+            );
+        }
+    }
+
+    call_markers = ["call me", "give me a call", "happy to talk", "let's talk",
+                    "lets talk", "phone me", "ring me", "call now", "can talk"];
+    for marker in call_markers {
+        if marker in lowered {
+            return ReplyRead(
+                intent_label="wants_call", wants_call=True,
+                phone_number=phone, sentiment="positive"
+            );
+        }
+    }
+
+    return ReplyRead(
+        intent_label="unclear", wants_call=False,
+        phone_number=phone, sentiment="neutral"
+    );
+}
+
+
 # ===========================================================================
 # WALKERS
 # ===========================================================================
@@ -315,6 +429,41 @@ async walker:pub ComposeOutreach(ProspectLookup) {
     has reports: list[dict] = [];
 
     async can compose with Prospect entry {
+        # IDENTITY INTEGRITY, checked before anything is drafted.
+        #
+        # An address that arrives at intake is trusted by construction and never
+        # goes through the attribution floor. That trust only holds if the
+        # identity the evidence came from is the identity the address belongs
+        # to. If a node carries one person's quotes and another person's email,
+        # the draft would quote one human's words at another - real evidence
+        # about the wrong person, which reads perfectly in every log and is
+        # strictly worse than sending nothing. Refuse here so no lane, present
+        # or future, can route that shape to a send.
+        evidence_urls: list[str] = [];
+        for ev in [here --> [?:Evidence]] {
+            if ev.url {
+                evidence_urls.append(str(ev.url));
+            }
+        }
+        integrity = check_identity(
+            here.email, str(here.email_source), here.linkedin_url, evidence_urls
+        );
+        if not integrity.ok {
+            report {
+                "ok": False,
+                "refused": True,
+                "prospect": here.name,
+                "prospect_id": jid(here),
+                "reason": (
+                    "refusing to compose: this prospect fails identity integrity - "
+                    + "; ".join(integrity.reasons)
+                    + ". Emailing one human words scraped from another is worse "
+                    + "than sending nothing."
+                )
+            };
+            disengage;
+        }
+
         linkedin_quote = best_linkedin_quote(here);
         github_artifact = best_github_artifact(here);
 
@@ -334,15 +483,36 @@ async walker:pub ComposeOutreach(ProspectLookup) {
         }
 
         founder = founder_context();
-        draft = draft_outreach(
-            founder["name"],
-            founder["one_liner"],
-            founder["needs"],
-            address_as(here),
-            here.headline,
-            linkedin_quote,
-            github_artifact
-        );
+        called = address_as(here);
+        source = "llm";
+        degraded_reason = "";
+
+        try {
+            draft = draft_outreach(
+                founder["name"],
+                founder["one_liner"],
+                founder["needs"],
+                called,
+                here.headline,
+                linkedin_quote,
+                github_artifact
+            );
+        } except Exception as e {
+            # Infrastructure failure, not a data failure - we still hold this
+            # person's exact words, so we still write to them.
+            source = "template";
+            degraded_reason = str(e)[:300];
+            print(f"[traction] ComposeOutreach: model unreachable ({degraded_reason}) - "
+                  + "falling back to the cited template");
+            draft = template_draft(
+                called,
+                founder["name"],
+                founder["one_liner"],
+                founder["needs"],
+                linkedin_quote,
+                github_artifact
+            );
+        }
 
         problem = citation_problem(draft, linkedin_quote, github_artifact);
         if problem {
@@ -352,6 +522,7 @@ async walker:pub ComposeOutreach(ProspectLookup) {
                 "prospect": here.name,
                 "prospect_id": jid(here),
                 "reason": f"refusing to send an ungrounded draft: {problem}",
+                "source": source,
                 "subject": draft.subject,
                 "body": draft.body
             };
@@ -376,7 +547,9 @@ async walker:pub ComposeOutreach(ProspectLookup) {
             "subject": draft.subject,
             "body": draft.body,
             "linkedin_quote": linkedin_quote,
-            "github_artifact": github_artifact
+            "github_artifact": github_artifact,
+            "source": source,
+            "degraded_reason": degraded_reason
         };
         disengage;
     }
@@ -478,7 +651,17 @@ walker:pub OnEmailReply {
         owner = [here <-- [?:Prospect]];
         who = owner[0].name if owner else "the prospect";
 
-        intent = read_reply_intent(self.text, who);
+        source = "llm";
+        degraded_reason = "";
+        try {
+            intent = read_reply_intent(self.text, who);
+        } except Exception as e {
+            source = "keyword";
+            degraded_reason = str(e)[:300];
+            print(f"[traction] OnEmailReply: model unreachable ({degraded_reason}) - "
+                  + "falling back to keyword extraction");
+            intent = fallback_reply_read(self.text);
+        }
         event = here +>:GotReply(received_at=time.time()):+> ReplyEvent(
             raw=self.text,
             intent=to_reply_intent(intent.intent_label),
@@ -501,7 +684,9 @@ walker:pub OnEmailReply {
             "proposed_times": intent.proposed_times,
             "phone_number": intent.phone_number,
             "sentiment": intent.sentiment,
-            "reply_jid": jid(event)
+            "reply_jid": jid(event),
+            "source": source,
+            "degraded_reason": degraded_reason
         };
         disengage;
     }

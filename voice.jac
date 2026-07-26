@@ -466,7 +466,11 @@ walker:pub KbQuery {
         }
 
         # Hot path: the dossier was flattened at schedule time.
+        resolved_by = "cache";
         blob = KB_CACHE.get(vapi_call, "");
+        if not blob {
+            resolved_by = "graph";
+        }
         if not blob {
             found = find_call_session(vapi_call);
             if found is not None {
@@ -475,10 +479,23 @@ walker:pub KbQuery {
             }
         }
         if not blob {
+            # Vapi can report a call id we never stored (a retried or re-created
+            # call). With exactly one call session on the graph there is no
+            # ambiguity about who is on the phone, so answer rather than stall.
+            # With several, guessing could describe the WRONG person to them -
+            # so we say nothing instead.
+            sessions = [root --> [?:Prospect] --> [?:CallSession]];
+            if len(sessions) == 1 and sessions[0].kb_blob {
+                blob = sessions[0].kb_blob;
+                resolved_by = "sole-session";
+            }
+        }
+        if not blob {
             blob = (
                 "No research is on file for this call, so nothing specific can be claimed "
                 + "about this person."
             );
+            resolved_by = "none";
         }
 
         elapsed_ms = (time.time() - started) * 1000.0;
@@ -488,6 +505,7 @@ walker:pub KbQuery {
             "ok": True,
             "call_id": vapi_call,
             "question": asked,
+            "resolved_by": resolved_by,
             "elapsed_ms": elapsed_ms
         };
         disengage;
@@ -675,11 +693,27 @@ walker:pub OnCallEnd {
         who = owner[0].name if owner else "the prospect";
 
         learned: list[dict] = [];
+        insight_source = "llm";
+        degraded_reason = "";
+        facts: list[LearnedFact] = [];
         if self.transcript.strip() {
-            for insight in extract_insights(self.transcript, who) {
+            try {
+                facts = extract_insights(self.transcript, who);
+            } except Exception as e {
+                # The transcript is already safely on the graph above. Insights
+                # are compounding memory for the NEXT call, so losing them costs
+                # future value, not this call - never fail the callback for it.
+                insight_source = "unavailable";
+                degraded_reason = str(e)[:300];
+                facts = [];
+                print(f"[traction] OnCallEnd: insight extraction unavailable "
+                      + f"({degraded_reason}) - transcript is stored, insights skipped");
+            }
+            for insight in facts {
+                fact: LearnedFact = insight as LearnedFact;
                 made = here +>:Learned(confidence=0.8):+> Insight(
-                    claim=insight.claim,
-                    evidence=insight.evidence,
+                    claim=fact.claim,
+                    evidence=fact.evidence,
                     learned_at=time.time()
                 );
                 learned.append({"claim": made.claim, "evidence": made.evidence});
@@ -691,7 +725,9 @@ walker:pub OnCallEnd {
             "prospect": who,
             "vapi_call_id": here.vapi_call_id,
             "transcript_chars": len(self.transcript),
-            "insights": learned
+            "insights": learned,
+            "insight_source": insight_source,
+            "degraded_reason": degraded_reason
         };
         disengage;
     }
