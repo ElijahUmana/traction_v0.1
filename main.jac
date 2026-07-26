@@ -42,9 +42,18 @@ import from schema {
 # --- teammate endpoint modules are imported here as they land ---------------
 # import from research { RunResearch, LinkedInLane, GithubLane, PlanCampaign }
 # import from identity { CrossLinkToGithub, CrossLinkToLinkedIn, ResolveEmail, RankAndSelect }
-# import from outreach { ComposeOutreach, SendOutreach, OnEmailReply }
-# import from voice    { ScheduleCall, KbQuery, BookInterview, OnCallEnd }
-# import from feed     { LiveFeed, list_lanes, list_prospects, get_run_state }
+import from outreach { ComposeOutreach, SendOutreach, OnEmailReply }
+import from voice    { ScheduleCall, KbQuery, BookInterview, OnCallEnd }
+import from rehearsal { SeedRehearsalProspect }
+import from feedseed {
+    SeedRehearsalRun, SeedRehearsalReasoning,
+    SeedRehearsalSurfaced, SeedRehearsalConvergence
+}
+import from feed {
+    LiveFeed, list_lanes, list_prospects, get_run_state,
+    feed_since, feed_backlog,
+    LaneView, RunStateView, ReasoningView, FeedBatch
+}
 
 
 # Node counts by archetype - the fastest way to prove the graph survived a restart.
