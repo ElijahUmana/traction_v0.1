@@ -58,6 +58,12 @@ glob GH_RAW: str = "https://raw.githubusercontent.com";
 glob SEARCH_BUDGET_PER_MIN: int = 26;
 glob SEARCH_WINDOW_SECONDS: float = 60.0;
 
+# Transient-fault retries. Bounded deliberately: an unbounded retry against a
+# rate limit turns one 403 into a stall, and the whole run has a demo slot to
+# fit inside. Status codes are never retried - only socket-level faults.
+glob MAX_TRANSIENT_RETRIES: int = 3;
+glob RETRY_BACKOFF_SECONDS: float = 0.8;
+
 
 """One HTTP result. `ok` is the only thing a caller may branch on.
 
@@ -133,15 +139,22 @@ obj GithubApi {
         }
     }
 
-    """Single HTTP GET. Every failure path produces an explicit, loud GhResponse."""
+    """Single HTTP GET with bounded retry. Every failure path produces an
+    explicit, loud GhResponse.
+
+    Retries exist because of a real failure observed during an evidence run:
+
+        !! UNEXPECTED IncompleteRead on /search/commits?q=author:branben
+           IncompleteRead(767909 bytes read, 24061 more expected)
+
+    A 768 KB commit-search body arrived truncated. The error was surfaced rather
+    than swallowed, so it did not masquerade as a clean empty result - but the
+    candidate still lost their email to a transient socket hiccup. `search/commits`
+    is the single most valuable call in the pipeline AND the largest response it
+    ever handles, which makes it the most likely to be cut short. Transient
+    faults are retried; HTTP status codes are NOT, because a 403 or a 404 is an
+    answer and re-asking wastes a slot out of a 30-per-minute budget."""
     def _raw(url: str, accept: str, is_search: bool) -> GhResponse {
-        if is_search {
-            self._throttle_search();
-            self.search_calls.append(time());
-            self.search_total += 1;
-        } else {
-            self.core_calls += 1;
-        }
         headers: dict[str, str] = {
             "Accept": accept,
             "User-Agent": "traction-jachacks-2026",
@@ -150,19 +163,31 @@ obj GithubApi {
         if self.has_token() {
             headers["Authorization"] = f"Bearer {self.token}";
         }
-        req = Request(url, headers=headers);
-        try {
-            resp = urlopen(req, timeout=25);
-            body: str = (resp.read() as bytes).decode("utf-8", "replace");
-            return GhResponse(ok=True, status=200, text=body);
-        } except HTTPError as e {
-            code: int = e.status as int;
-            detail: str = "";
-            try {
-                detail = (e.read() as bytes).decode("utf-8", "replace")[0:220];
-            } except Exception {
-                detail = "<unreadable body>";
+
+        attempt: int = 0;
+        while attempt < MAX_TRANSIENT_RETRIES {
+            attempt += 1;
+            if is_search {
+                self._throttle_search();
+                self.search_calls.append(time());
+                self.search_total += 1;
+            } else {
+                self.core_calls += 1;
             }
+            req = Request(url, headers=headers);
+            try {
+                resp = urlopen(req, timeout=30);
+                body: str = (resp.read() as bytes).decode("utf-8", "replace");
+                return GhResponse(ok=True, status=200, text=body);
+            } except HTTPError as e {
+                # A status code is an ANSWER, not a fault. Never retry it.
+                code: int = e.status as int;
+                detail: str = "";
+                try {
+                    detail = (e.read() as bytes).decode("utf-8", "replace")[0:220];
+                } except Exception {
+                    detail = "<unreadable body>";
+                }
             # 404 is ordinary and expected - most candidates have no profile
             # README, no pyproject.toml, no personal site. Do not shout.
             if code == 404 {
@@ -174,14 +199,36 @@ obj GithubApi {
             } else {
                 self._note(f"!! HTTP {code} on {url[0:110]} :: {detail}");
             }
-            return GhResponse(ok=False, status=code, error=f"HTTP {code}: {detail}");
-        } except URLError as e {
-            self._note(f"!! NETWORK FAILURE on {url[0:110]} :: {str(e)}");
-            return GhResponse(ok=False, status=0, error=f"network: {str(e)}");
-        } except Exception as e {
-            self._note(f"!! UNEXPECTED {type(e).__name__} on {url[0:110]} :: {str(e)}");
-            return GhResponse(ok=False, status=0, error=f"{type(e).__name__}: {str(e)}");
+                return GhResponse(ok=False, status=code, error=f"HTTP {code}: {detail}");
+            } except URLError as e {
+                # Transient: DNS blip, connection reset, TLS handshake failure.
+                if attempt < MAX_TRANSIENT_RETRIES {
+                    self._note(f".. network fault on {url[0:90]} ({str(e)[0:60]}) - "
+                               + f"retry {attempt}/{MAX_TRANSIENT_RETRIES - 1}");
+                    sleep(RETRY_BACKOFF_SECONDS * attempt);
+                    continue;
+                }
+                self._note(f"!! NETWORK FAILURE after {attempt} attempts on {url[0:110]} :: {str(e)}");
+                return GhResponse(ok=False, status=0,
+                                  error=f"network after {attempt} attempts: {str(e)}");
+            } except Exception as e {
+                # IncompleteRead lives here, and it is the one that actually bit
+                # us: a truncated 768 KB commit-search body. Retrying is the only
+                # correct response - the data exists, the socket just gave up.
+                if attempt < MAX_TRANSIENT_RETRIES {
+                    self._note(f".. {type(e).__name__} on {url[0:90]} - "
+                               + f"retry {attempt}/{MAX_TRANSIENT_RETRIES - 1}");
+                    sleep(RETRY_BACKOFF_SECONDS * attempt);
+                    continue;
+                }
+                self._note(f"!! {type(e).__name__} after {attempt} attempts on {url[0:110]} :: {str(e)}");
+                self._note("!! a failed fetch is NOT the same as 'this person has no email' - "
+                           + "the ledger records this as an API failure, not a clean drop");
+                return GhResponse(ok=False, status=0,
+                                  error=f"{type(e).__name__} after {attempt} attempts: {str(e)}");
+            }
         }
+        return GhResponse(ok=False, status=0, error="retry loop exhausted");
     }
 
     """GET an api.github.com path returning a JSON object. Cached."""

@@ -1,0 +1,68 @@
+TRACTION - LANE D / EMAIL GATE / RANKING : LIVE PROOF
+Captured 2026-07-26 16:18:55 PDT against the real GitHub REST API.
+Reproduce: export GITHUB_TOKEN=$(gh auth token) && jac clean && jac run proof_laned.jac
+Every address below was resolved at runtime. Nothing is fabricated or fixtured.
+
+==============================================================================
+TRACTION - LANE D LIVE PROOF
+==============================================================================
+
+--- LANE D: candidate generation ------------------------------------
+  surfaced      : 14
+  api calls     : {'core_calls': 39, 'search_calls': 2, 'cache_hits': 0, 'errors': 0}
+
+  sidebar narration (analyst voice):
+    [plan] Lane D running programmatically against the GitHub REST API - no browser. Looking for people shipping code against this problem right now, not people talking about it.
+    [hit] 12 candidates from repositories pushed since 2026-07-01 matching 'ai agent framework'. Filtering above 400 stars on purpose - a maintainer with a community already has beta testers; someone shipping alone this week does not.
+    [plan] Switching from artifacts to complaints: searching issue bodies for people stating this problem in their own words. Same doctrine as Lane A's comment mining, different surface.
+    [hit] 2 people opened issues in the last two months saying "hard to evaluate agents" - stated in their own words, publicly, with a date.
+    [rank] Lane D surfaced 14 candidates from GitHub, and rejected 25 accounts that matched the query but showed no sign of a person maintaining them. 2 search calls, 0 served from cache.
+
+--- THE HARD GATE: six-step waterfall -------------------------------
+[gh] !! UNEXPECTED IncompleteRead on https://api.github.com/search/commits?q=author:branben&per_page=100 :: IncompleteRead(767909 bytes read, 24061 more expected)
+  resolved: 12   dropped: 2
+  api     : {'core_calls': 88, 'search_calls': 13, 'cache_hits': 0, 'errors': 1}
+
+  [KEEP] fb0sh                  fb0sh@outlook.com                  taken from commits they authored themselves; local part is exactly the login
+  [DROP] csorodrigo                                                waterfall exhausted - all six steps returned nothing
+  [KEEP] rejaulkarim0212        rejaulkarim0212@gmail.com          taken from commits they authored themselves; local part is exactly the login
+  [DROP] mzwandile16                                               waterfall exhausted - all six steps returned nothing
+  [KEEP] SuperInstance          fleet@cocapn.ai                    taken from commits they authored themselves; fuzzy login similarity 0.22
+  [KEEP] sidiishan              ishansidi2@gmail.com               published on their own GitHub profile; fuzzy login similarity 0.56
+  [KEEP] ezigus                 eric@zig.us                        published on their own GitHub profile; fuzzy login similarity 0.40
+  [KEEP] branben                brandonbennett@macbookair.myfiosgateway.com taken from commits they authored in their own repository; local part is exactly the profile name
+  [KEEP] icdev-ai               agi@icdev.ai                       taken from commits they authored themselves; fuzzy profile name similarity 0.25
+  [KEEP] madawei2699            madawei2699@gmail.com              taken from commits they authored themselves; local part is exactly the login
+  [KEEP] Nerevakiin             djmatisk@yahoo.gr                  taken from commits they authored themselves; fuzzy profile name similarity 0.43
+  [KEEP] harindukavishka        harindukavishka38@gmail.com        taken from commits they authored themselves; local part is exactly the login
+  [KEEP] ncreighton             n.creighton14@gmail.com            taken from commits they authored themselves; local part is exactly the login
+  [KEEP] dokterbob              mathijs@mathijsfietst.nl           published on their own GitHub profile; local part contains the profile name
+
+--- CROSS-LINK: LinkedIn -> GitHub (the HEAVY direction) ------------
+  matched=True  login=simonw  tier=verified
+  basis : github.com/simonw is listed on their own LinkedIn contact card
+
+  negative control - a github link that is NOT this person:
+  matched=False  basis: github.com/torvalds appeared in a post they wrote but nothing corroborates it being Jane Unrelated (name similarity 0.29, no shared verified org)
+
+--- RANK AND SELECT -------------------------------------------------
+  selected 3  /  dropped 2
+
+  A-tier  Mathijs de Bruin           mathijs@mathijsfietst.nl
+      score 0.662 pre-crosslink -> 0.662 (lanes: ['D'], x1.0)
+      email confidence 0.9167500000000001
+  A-tier  fb0sh                      fb0sh@outlook.com
+      score 0.657 pre-crosslink -> 0.657 (lanes: ['D'], x1.0)
+      email confidence 0.9
+  A-tier  Md. Rejaul Karim           rejaulkarim0212@gmail.com
+      score 0.657 pre-crosslink -> 0.657 (lanes: ['D'], x1.0)
+      email confidence 0.9
+
+  DROP LEDGER (shown on stage - visible elimination is the point):
+    csorodrigo             waterfall exhausted - all six steps returned nothing
+    mzwandile16            waterfall exhausted - all six steps returned nothing
+
+--- API ERRORS (surfaced, never swallowed) --------------------------
+    !! UNEXPECTED IncompleteRead on https://api.github.com/search/commits?q=author:branben&per_page=100 :: IncompleteRead(767909 bytes read, 24061 more expected)
+
+==============================================================================

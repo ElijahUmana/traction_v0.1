@@ -1,0 +1,40 @@
+======================================================================
+Lane W — deep research on one warm lead
+======================================================================
+
+[0] discovering a reachable profile from the live session...
+[0] target: https://www.linkedin.com/in/elijah-umana-4964b3206/
+
+[1] spawning LaneW on the Lane node...
+Prospect(name='Elijah Umana', handle='elijah-umana-4964b3206', headline='SWE Intern @ Uber | CS + AI @ Minerva University', company='Uber', linkedin_url='https://www.linkedin.com/in/elijah-umana-4964b3206/', email='xingzhizhu6@gmail.com', email_source=<EmailSource.PROVIDED: 'provided'>, email_confidence=1.0, tier=<CompletenessTier.A: 'A'>, score=0.0, score_pre_crosslink=0.0, dropped_reason='')
+
+[2] lane state       done   (33.3s)
+[2] bb_session_id    4e5a7b71-02e6-4ec8-98ab-4380777afcc8
+[2] live_url         CAPTURED
+
+[3] analyst narration — 6 emissions
+    [plan] Lane W. One named warm lead, already trusted. Not searching - reading them properly, so the 
+    [plan] Opening Xingzhi Zhu's profile directly. No search needed - we already know exactly who this 
+    [observe] Read Elijah Umana: SWE Intern @ Uber | CS + AI @ Minerva University. At Uber.
+    [plan] Now reading their recent activity. A job title tells us what they are; what they posted last
+    [observe] 4 recent posts from Elijah Umana. Reading for something worth quoting back.
+    [yield] Lane W complete. 6 pieces of evidence on Elijah Umana, reachable at xingzhizhu6@gmail.com.
+
+[4] prospects written  1
+    name        Elijah Umana
+    headline    SWE Intern @ Uber | CS + AI @ Minerva University
+    company     Uber
+    linkedin    https://www.linkedin.com/in/elijah-umana-4964b3206/
+    email       xingzhizhu6@gmail.com [provided]
+    tier        A
+    warm lead   True
+    evidence    6 pieces
+      - [headline, undated] SWE Intern @ Uber | CS + AI @ Minerva University
+      - [about, undated] There is always light, If only we're brave enough to see it. If 
+      - [post, 30d] SWE Intern @ Uber | CS + AI @ Minerva University
+      - [post, 60d] 2 months ago • Edited • Visible to anyone on or off LinkedIn
+      - [post, 60d] 2 months ago • Visible to anyone on or off LinkedIn
+      - [post, undated] Carnegie Mellon University Mellon College of Science
+
+======================================================================
+LANE_W_OK=True

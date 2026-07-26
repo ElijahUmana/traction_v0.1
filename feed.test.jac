@@ -1,12 +1,25 @@
 """Tests for the dashboard feed projections.
 
-Run with:  jac test feed.jac
+Run with:  PYTEST_XDIST_AUTO_NUM_WORKERS=1 jac test feed.jac
 
-These need NO API keys - nothing here calls an LLM. Run `jac clean --all --force`
-first if a previous run left nodes behind: tests in a file share one persisted
-root and it also survives between runs, so assertions here always scope
-themselves to the run they just created rather than counting totals on root.
+The env var is NOT optional. `jac test` runs pytest-xdist with ten workers by
+default and injects `-n` unconditionally (so `-p no:xdist` is rejected and there
+is no CLI flag). Ten workers mutating the single root anchor produces
+intermittent `WriteConflict: anchor 00000000-... changed concurrently`, which
+looks exactly like a race in the code under test and is not one. Measured here:
+5 failures with the default workers, 0 with one. Use ops/test.sh.
+
+These need NO API keys - nothing in feed.jac calls an LLM.
+
+Each test gets its OWN isolated root (verified; the jac-testing skill claims the
+opposite), so every test seeds the graph it needs rather than relying on a
+predecessor.
 """
+
+# feed.jac does not import ReasoningKind - it only reads `kind` as a string - so
+# the annex must import it itself. An annex sees its base module's declarations,
+# not the names its base module chose not to import.
+import from contracts { ReasoningKind }
 
 import time;
 

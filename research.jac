@@ -420,6 +420,11 @@ walker LinkedInLane {
     has fixture: dict = {};
 
     has tactics: any = None;
+    # The Lane this walker was spawned on. Captured once at entry rather than
+    # rediscovered by walking Probe/Widened edges backwards from each probe:
+    # reverse-edge reads race against the sibling lanes writing concurrently,
+    # and the walker already knows the answer.
+    has lane_node: any = None;
     has ladder: list[ProbeSpec] = [];
     has browser: any = None;
 
@@ -443,6 +448,7 @@ walker LinkedInLane {
         self.tactics = tactics_for(str(self.lane_id));
         t = self.tactics;
 
+        self.lane_node = here;
         here.doctrine = t.doctrine;
         here.state = LaneState.LAUNCHING;
         here.keywords = self.phrases;
@@ -515,13 +521,13 @@ walker LinkedInLane {
 
         if self.probes_run > 1 {
             self.narrate(
-                here_lane(here),
+                self.lane_node,
                 say_next_query(here.keywords, human_window(here.date_posted)),
                 ReasoningKind.PLAN
             );
         }
 
-        lane_node = here_lane(here);
+        lane_node = self.lane_node;
         results = self.search(lane_node, here);
         here.result_count = len(results);
 
@@ -713,22 +719,6 @@ impl LinkedInLane.harvest(here: Lane, probe: SearchProbe, results: list) -> int 
 }
 
 
-def here_lane(probe: SearchProbe) -> Lane {
-    """The Lane a probe hangs under, however deep the ladder went.""";
-    cur = probe;
-    for _ in range(12) {
-        owners = [cur <-:Probe:<-];
-        if owners {
-            return owners[0];
-        }
-        parents = [cur <-:Widened:<-];
-        if not parents {
-            break;
-        }
-        cur = parents[0];
-    }
-    raise ValueError("SearchProbe is not attached to any Lane");
-}
 
 
 # ===========================================================================
