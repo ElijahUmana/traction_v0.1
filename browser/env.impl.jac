@@ -1,12 +1,23 @@
 """Implementation of the config loader."""
 
 impl _load_env_file {
-    # The loaded-flag lives inside a dict rather than a rebindable global:
-    # mutating a glob container needs no global declaration.
+    # Fast path: already loaded, no lock needed.
     if _ENV_STATE.get("loaded") {
         return;
     }
-    _ENV_STATE["loaded"] = True;
+    with _ENV_LOCK {
+        # Re-check inside the lock: another lane may have loaded while we waited.
+        if _ENV_STATE.get("loaded") {
+            return;
+        }
+        _load_env_locked();
+        # Set last, so no thread can see a partially-filled cache as complete.
+        _ENV_STATE["loaded"] = True;
+    }
+}
+
+
+impl _load_env_locked {
     here = Path(str(__file__)).resolve();
     for parent in here.parents {
         candidate = parent / ".env";

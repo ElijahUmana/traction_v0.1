@@ -9,10 +9,10 @@ is spoken by cdp.impl.jac, and the browser is 2,500 miles away.
 
 import os;
 import time;
-import from browserbase { Browserbase }
-import from cdp { CDP }
-import from page { Page }
-import from env { env }
+import from browser.browserbase { Browserbase }
+import from browser.cdp { CDP }
+import from browser.page { Page }
+import from browser.env { env }
 
 """Pull the first @eN handle whose snapshot line matches every needle."""
 def find_ref(snapshot: str, needles: list[str]) -> str {

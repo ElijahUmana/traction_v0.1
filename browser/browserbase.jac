@@ -13,7 +13,7 @@ persist=false so a lane can read the auth but never clobber it.
 import json;
 import urllib.request;
 import urllib.error;
-import from env { env }
+import from browser.env { env }
 
 glob BB_API: str = "https://api.browserbase.com/v1";
 

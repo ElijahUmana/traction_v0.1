@@ -16,7 +16,7 @@ Two behaviours here are deliberate upgrades over the naive reference client:
 
 import json;
 import time;
-import from ws { JacWS }
+import from browser.ws { JacWS }
 
 
 obj CDP {

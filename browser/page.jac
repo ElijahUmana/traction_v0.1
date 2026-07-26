@@ -14,7 +14,7 @@ import time;
 import base64;
 import random;
 import from pathlib { Path }
-import from cdp { CDP }
+import from browser.cdp { CDP }
 
 # Roles worth handing an agent a clickable ref for.
 glob INTERACTIVE_ROLES: set[str] = {

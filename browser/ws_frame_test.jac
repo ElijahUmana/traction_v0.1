@@ -4,7 +4,7 @@
 """
 
 import struct;
-import from ws { build_frame, mask_payload, OP_TEXT, OP_BINARY, OP_PING }
+import from browser.ws { build_frame, mask_payload, OP_TEXT, OP_BINARY, OP_PING }
 
 """Decode a client frame back into (fin, opcode, payload) to close the loop."""
 def decode_client_frame(raw: bytes) -> tuple[bool, int, bytes] {

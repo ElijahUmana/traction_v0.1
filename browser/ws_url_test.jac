@@ -3,7 +3,7 @@
 Run:  jac run traction/browser/ws_url_test.jac
 """
 
-import from ws { parse_ws_url }
+import from browser.ws { parse_ws_url }
 
 with entry {
     cases = [

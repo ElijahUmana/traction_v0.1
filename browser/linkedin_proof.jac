@@ -8,10 +8,10 @@ the session is genuinely logged in rather than looking at a signup wall.
 """
 
 import os;
-import from browserbase { Browserbase }
-import from cdp { CDP }
-import from page { Page }
-import from env { env }
+import from browser.browserbase { Browserbase }
+import from browser.cdp { CDP }
+import from browser.page { Page }
+import from browser.env { env }
 
 with entry {
     evidence = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "evidence");

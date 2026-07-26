@@ -1,7 +1,7 @@
 """Layers 1-3 against a REAL Browserbase browser: REST -> wss -> CDP."""
 
-import from browserbase { Browserbase }
-import from cdp { CDP }
+import from browser.browserbase { Browserbase }
+import from browser.cdp { CDP }
 
 with entry {
     bb = Browserbase();
