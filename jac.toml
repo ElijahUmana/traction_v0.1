@@ -1,0 +1,26 @@
+[project]
+name = "traction"
+version = "0.1.0"
+description = "TRACTION - a persistent prospect graph that finds one human from four directions at once, then emails, calls, and books them. JacHacks SF 2026."
+entry-point = "main.jac"
+kind = "service"
+jac-version = "==0.34.7"
+
+[dependencies]
+byllm = "~=0.6"
+
+[byllm.model]
+default_model = "anthropic/claude-sonnet-4-6"
+api_key = "${ANTHROPIC_API_KEY}"
+
+[byllm.call_params]
+temperature = 0.2
+
+[serve]
+port = 8000
+
+[run]
+diagnostics = "error"
+
+[test]
+directory = "."
