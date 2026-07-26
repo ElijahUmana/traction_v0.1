@@ -108,7 +108,7 @@ sem draft_outreach = "Write one cold email from a founder to a named engineer. Y
 sem draft_outreach.founder_name = "Who is sending the email; sign off with this name.";
 sem draft_outreach.product_one_liner = "What the founder's product does, in one plain sentence.";
 sem draft_outreach.what_the_founder_needs = "The specific ask, e.g. three beta testers this week.";
-sem draft_outreach.prospect_name = "The recipient's first name; address them by it.";
+sem draft_outreach.prospect_name = "What the recipient is actually called. Open the email by addressing them with exactly this, never with a fuller or more formal version of it.";
 sem draft_outreach.prospect_headline = "The recipient's professional headline, for context only - do not quote it back to them.";
 sem draft_outreach.linkedin_quote = "The exact sentence the recipient wrote in public. Quote it verbatim. Empty means they have no LinkedIn evidence - then rely on the GitHub artifact alone.";
 sem draft_outreach.github_artifact = "The exact GitHub artifact the recipient built or filed. Name it verbatim. Empty means rely on the LinkedIn quote alone.";
@@ -124,6 +124,28 @@ sem read_reply_intent.prospect_name = "Who sent it, for disambiguating pronouns.
 # ===========================================================================
 # GRAPH READS - the citations that make the email non-generic
 # ===========================================================================
+
+"""What to actually call this person in a greeting.
+
+The profile name and the name a human answers to are different things. LinkedIn
+says "Xingzhi Zhu"; everyone who knows her says "Becky". An email that opens
+"Hi Xingzhi", sent by a system whose entire pitch is that it read this person
+carefully, quietly disproves its own thesis in the first three words. So the
+preferred name wins whenever the graph carries one, and otherwise we fall back
+to the first token of the profile name rather than the full legal name.
+"""
+def address_as(prospect: Prospect) -> str {
+    preferred = prospect.preferred_name.strip();
+    if preferred {
+        return preferred;
+    }
+    parts = prospect.name.strip().split();
+    if parts {
+        return parts[0];
+    }
+    return prospect.name;
+}
+
 
 """Best LinkedIn sentence on record for this prospect, or empty.
 
@@ -316,7 +338,7 @@ async walker:pub ComposeOutreach(ProspectLookup) {
             founder["name"],
             founder["one_liner"],
             founder["needs"],
-            here.name,
+            address_as(here),
             here.headline,
             linkedin_quote,
             github_artifact
@@ -347,6 +369,7 @@ async walker:pub ComposeOutreach(ProspectLookup) {
             "ok": True,
             "refused": False,
             "prospect": here.name,
+            "addressed_as": address_as(here),
             "prospect_id": jid(here),
             "email": here.email,
             "thread_jid": jid(thread),

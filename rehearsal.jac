@@ -30,6 +30,7 @@ Returns the prospect jid so a rehearsal script can drive the rest of the chain.
 walker:pub SeedRehearsalProspect {
     has confirm: str = "";
     has name: str = "";
+    has preferred_name: str = "";
     has email: str = "";
     has handle: str = "";
     has headline: str = "";
@@ -85,8 +86,11 @@ walker:pub SeedRehearsalProspect {
             );
         }
 
+        # What she is actually called, which is not what her profile says.
+        called = self.preferred_name if self.preferred_name else cfg("TEAMMATE_PREFERRED_NAME", "");
         prospect = root ++> Prospect(
             name=target_name,
+            preferred_name=called,
             handle=self.handle if self.handle else target_email.split("@")[0],
             headline=self.headline,
             company=self.company,

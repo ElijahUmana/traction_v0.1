@@ -24,7 +24,10 @@ import from schema {
     Prospect, Evidence, EmailThread, ReplyEvent,
     CallSession, Insight, Booking, Called, Learned, Booked
 }
-import from outreach { ProspectLookup, best_linkedin_quote, best_github_artifact, founder_context }
+import from outreach {
+    ProspectLookup, best_linkedin_quote, best_github_artifact,
+    founder_context, address_as
+}
 import from svc { vapi_base, vapi_headers, http_json, cfg, cfg_required, public_url_for, founder_email }
 import from gcal { create_meeting }
 
@@ -50,16 +53,6 @@ glob llm: Model = Model(model_name=cfg("BYLLM_MODEL", "claude-sonnet-4-6"));
 glob KB_CACHE: dict[str, str] = {};
 
 
-"""First name only - the opening line is spoken aloud, and a full legal name reads as a robocall."""
-def first_name(full: str) -> str {
-    parts = full.strip().split();
-    if parts {
-        return parts[0];
-    }
-    return full;
-}
-
-
 """Flatten everything the graph knows about one human into speakable prose.
 
 Written for a text-to-speech engine, so no markup, no bullet characters and no
@@ -73,7 +66,8 @@ def build_dossier(prospect: Prospect) -> str {
     lane_names = [str(l) for l in lanes];
 
     lines: list[str] = [];
-    lines.append(f"The person on this call is {prospect.name}.");
+    called = address_as(prospect);
+    lines.append(f"The person on this call is {called}. Address them as {called}, never by any other form of their name.");
     if prospect.headline {
         lines.append(f"Their headline reads: {prospect.headline}.");
     }
@@ -318,7 +312,8 @@ async walker:pub ScheduleCall(ProspectLookup) {
             "schedulePlan": {"earliestAt": earliest},
             "assistantOverrides": {
                 "variableValues": {
-                    "prospect_name": here.name,
+                    "prospect_name": address_as(here),
+                    "prospect_profile_name": here.name,
                     "prospect_headline": here.headline,
                     "prospect_company": here.company,
                     "linkedin_quote": best_linkedin_quote(here),
@@ -328,7 +323,7 @@ async walker:pub ScheduleCall(ProspectLookup) {
                     "dossier": dossier
                 },
                 "firstMessage": (
-                    f"Hi {first_name(here.name)}, this is an AI assistant calling on behalf of "
+                    f"Hi {address_as(here)}, this is an AI assistant calling on behalf of "
                     + f"{founder['name']}. You replied to our email a moment ago - is now "
                     + "still a good time?"
                 ),
