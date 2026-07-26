@@ -199,3 +199,76 @@ test "ResearchRun.prospects walks two hops and dedupes" {
     assert run.lane(LaneId.A) is not None, "lane(A) lookup failed";
     assert run.lane(LaneId.C) is None, "lane(C) should not exist in this run";
 }
+
+test "warm lead is a first-class prospect on Lane W, exempt from the email gate" {
+    founder = seed_demo_graph();
+
+    warm = Prospect(name="Marek K", handle="marek-k");
+    warm.linkedin_url = "https://linkedin.com/in/marek-k";
+    warm.is_warm_lead = True;
+    warm.email = "marek@teammate.dev";
+    warm.email_source = EmailSource.PROVIDED;
+    warm.email_confidence = 1.0;
+    warm.tier = CompletenessTier.S;
+    founder +>:HasWarmLead(note="on stage with us"):+> warm;
+
+    run = [founder ->:Runs:->][0];
+    lane_w = Lane(lane_id=LaneId.W, doctrine="deep research one known human");
+    run +>:HasLane(launched_at=1000.0):+> lane_w;
+    lane_w +>:Surfaced(lane=LaneId.W, at_rank=1, found_at=1012.0):+> warm;
+
+    assert len([founder ->:HasWarmLead:->]) == 1, "HasWarmLead did not traverse";
+    fetched = [founder ->:HasWarmLead:->][0];
+    assert fetched.is_warm_lead, "warm lead flag lost";
+    assert fetched.email_source == EmailSource.PROVIDED, "warm lead email must short-circuit the waterfall";
+    assert run.lane(LaneId.W) is not None, "Lane W is not a first-class lane";
+    assert LaneId.W in warm.convergence_lanes(), "Lane W did not register as a surfacing lane";
+    assert warm.to_view().is_warm_lead, "view lost the warm-lead flag";
+}
+
+test "dry probe widens into a child and the search tree stays inspectable" {
+    founder = seed_demo_graph();
+    run = [founder ->:Runs:->][0];
+    lane_a = run.lane(LaneId.A);
+    assert lane_a is not None, "lane A missing";
+
+    p0 = lane_a.open_probe("retrieval quality", "retrieval", "past-24h");
+    assert p0.state == ProbeState.PENDING, "new probe should be pending";
+    assert p0.depth == 0, "root probe should be depth 0";
+
+    # zero yield -> widen the date filter rather than giving up
+    p1 = p0.widen("retrieval quality", "retrieval", "past-week");
+    assert p0.state == ProbeState.DRY, "widening must mark the parent dry";
+    assert p1.depth == 1, "child probe should be one rung deeper";
+    assert p1.widened_from == "retrieval quality", "child lost its provenance";
+
+    p2 = p1.widen("chunking strategy", "chunking", "past-month");
+    assert p2.depth == 2, "ladder should keep deepening";
+
+    # the dead branch is still reachable - that is the point
+    chain = [p0 ->:Widened:-> ->:Widened:->];
+    assert len(chain) == 1, "the widening chain is not traversable end to end";
+    assert chain[0].query == "chunking strategy", "wrong node at the end of the ladder";
+
+    p2.state = ProbeState.YIELDED;
+    p2.yield_count = 4;
+    assert len(lane_a.probes()) == 1, "open_probe should attach exactly one root probe to the lane";
+
+    dot = printgraph(root);
+    assert "SearchProbe" in dot, "search tree is not rendered by printgraph";
+}
+
+test "email confidence is separable from email source" {
+    founder = seed_demo_graph();
+    target = [founder ->:Runs:-> ->:HasLane:-> ->:Surfaced:->][0];
+
+    # A bare noreply@github.com from a forked repo manifest: right format, wrong human.
+    target.email = "noreply@github.com";
+    target.email_source = EmailSource.GITHUB_README;
+    target.email_confidence = 0.11;
+    assert target.email_confidence < 0.5, "low-trust attribution must survive as a number, not a boolean";
+
+    view = target.to_view();
+    assert view.email_confidence == 0.11, "view lost the attribution confidence";
+    assert view.email_source == EmailSource.GITHUB_README, "view lost the waterfall step";
+}

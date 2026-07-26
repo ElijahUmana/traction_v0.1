@@ -22,13 +22,15 @@ enum LaneId: str {
     A = "A",
     B = "B",
     C = "C",
-    D = "D"
+    D = "D",
+    W = "W"
 }
-sem LaneId = "Which of the four parallel research lanes a thing belongs to.";
+sem LaneId = "Which of the parallel research lanes a thing belongs to.";
 sem LaneId.A = "Lane A - comment mining under mid-tier practitioner posts.";
 sem LaneId.B = "Lane B - post authorship; first-person problem statements.";
 sem LaneId.C = "Lane C - synonym sweep across adjacent phrasings.";
 sem LaneId.D = "Lane D - GitHub-first, programmatic, never a visible browser.";
+sem LaneId.W = "Lane W - deep research on the one warm lead named at intake. The only lane whose output is guaranteed to reach the email, call and booking sequence.";
 
 enum LaneState: str {
     IDLE = "idle",
@@ -57,7 +59,9 @@ sem RunStatus = "Overall stage of one end-to-end research run.";
 enum ReasoningKind: str {
     PLAN = "plan",
     OBSERVE = "observe",
+    JUDGE = "judge",
     PIVOT = "pivot",
+    YIELD = "yield",
     HIT = "hit",
     MISS = "miss",
     CROSSLINK = "crosslink",
@@ -65,8 +69,19 @@ enum ReasoningKind: str {
     RANK = "rank"
 }
 sem ReasoningKind = "The rhetorical move a line in the analyst sidebar is making.";
+sem ReasoningKind.JUDGE = "Weighing a candidate against the ICP before deciding to surface or discard them.";
 sem ReasoningKind.PIVOT = "Announcing that the current angle is dry and naming the next one.";
+sem ReasoningKind.YIELD = "Reporting what a probe returned.";
 sem ReasoningKind.HIT = "Reporting a genuine find worth surfacing.";
+
+enum ProbeState: str {
+    PENDING = "pending",
+    RUNNING = "running",
+    DRY = "dry",
+    YIELDED = "yielded"
+}
+sem ProbeState = "Lifecycle of one search probe on the widening ladder.";
+sem ProbeState.DRY = "This probe returned nothing; it spawns a widened child probe.";
 
 # ---------------------------------------------------------------------------
 # Evidence and identity
@@ -108,12 +123,16 @@ enum EmailSource: str {
     GITHUB_COMMIT = "github_commit",
     GITHUB_PROFILE = "github_profile",
     GITHUB_README = "github_readme",
+    PERSONAL_SITE = "personal_site",
     LINKEDIN_CONTACT_INFO = "linkedin_contact_info",
     VERIFIED_GUESS = "verified_guess",
     PROVIDED = "provided",
     NONE = "none"
 }
-sem EmailSource = "Which step of the six-step waterfall actually produced the email address.";
+sem EmailSource = "Which step of the waterfall actually produced the email address. Pairs with email_confidence: the source says WHERE it came from, the confidence says whether we believe it belongs to this specific human.";
+sem EmailSource.GITHUB_COMMIT = "Authored-commit metadata - the highest-trust source, because the person signed it themselves.";
+sem EmailSource.PERSONAL_SITE = "A mailto scraped from the personal site or blog linked off their profile.";
+sem EmailSource.PROVIDED = "Known at intake because this is the warm lead; no resolution needed.";
 sem EmailSource.NONE = "No email was found; this prospect is dropped at the gate.";
 
 enum CompletenessTier: str {
@@ -271,12 +290,15 @@ obj ProspectView {
     has handle: str;
     has headline: str = "";
     has company: str = "";
+    has linkedin_url: str = "";
     has email: str = "";
     has email_source: EmailSource = EmailSource.NONE;
+    has email_confidence: float = 0.0;
     has tier: CompletenessTier = CompletenessTier.DROPPED;
     has score: float = 0.0;
     has score_pre_crosslink: float = 0.0;
     has dropped_reason: str = "";
+    has is_warm_lead: bool = False;
     has convergence_lanes: list[LaneId] = [];
     has linkedin_quote: str = "";
     has github_artifact: str = "";

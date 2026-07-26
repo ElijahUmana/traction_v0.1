@@ -13,11 +13,18 @@ agent at 3pm reads what the browsers wrote at 11am):
     root
      └── Founder
           ├─:Targets:→      ICP
-          ├─:HasWarmLead:→  Prospect
+          ├─:HasWarmLead:→  Prospect          (Lane W deep-researches this one)
           └─:Runs:→         ResearchRun
                └─:HasLane:→ Lane
                     ├─:Emitted:→  Reasoning
+                    ├─:Probe:→    SearchProbe
+                    │               └─:Widened:→ SearchProbe   (the dry-branch ladder)
                     └─:Surfaced:→ Prospect        ← convergence reads back up this
+
+The widening ladder is graph structure, not an if-chain: when a probe returns
+nothing it spawns a widened child and the walker visits it, so the traversal
+deepens exactly where the search struggled and `printgraph` renders the dead
+branches beside the live ones.
 
     Prospect
      ├─:HasEvidence:→ Evidence          edge has {lane, confidence}
@@ -38,7 +45,7 @@ a list of anything.
 import from contracts {
     LaneId, LaneState, RunStatus, ReasoningKind,
     EvidenceSource, EvidenceKind, IdentityTier, EmailSource,
-    CompletenessTier, ReplyIntent, CallOutcome,
+    CompletenessTier, ReplyIntent, CallOutcome, ProbeState,
     ProspectView
 }
 
@@ -78,9 +85,25 @@ node Lane {
     has live_url: str = "";
     has state: LaneState = LaneState.IDLE;
     has keywords: list[str] = [];
+    has current_query: str = "";
     has query_index: int = 0;
 
     def narrate(sentence: str, kind: ReasoningKind, t: float) -> Reasoning;
+    def open_probe(query: str, keywords: str, date_posted: str) -> SearchProbe;
+    def probes -> list[SearchProbe];
+}
+
+node SearchProbe {
+    has query: str;
+    has keywords: str = "";
+    has date_posted: str = "";
+    has variant: int = 0;
+    has depth: int = 0;
+    has state: ProbeState = ProbeState.PENDING;
+    has yield_count: int = 0;
+    has widened_from: str = "";
+
+    def widen(query: str, keywords: str, date_posted: str) -> SearchProbe;
 }
 
 node Reasoning {
@@ -94,12 +117,15 @@ node Prospect {
     has handle: str;
     has headline: str = "";
     has company: str = "";
+    has linkedin_url: str = "";
     has email: str = "";
     has email_source: EmailSource = EmailSource.NONE;
+    has email_confidence: float = 0.0;
     has tier: CompletenessTier = CompletenessTier.DROPPED;
     has score: float = 0.0;
     has score_pre_crosslink: float = 0.0;
     has dropped_reason: str = "";
+    has is_warm_lead: bool = False;
 
     def convergence_lanes -> list[LaneId];
     def is_converged -> bool;
@@ -161,6 +187,7 @@ node CallSession {
     has transcript: str = "";
     has outcome: CallOutcome = CallOutcome.SCHEDULED;
     has phone_number: str = "";
+    has kb_blob: str = "";
 }
 
 node Insight {
@@ -202,9 +229,18 @@ edge Emitted: Lane --> Reasoning {
 }
 
 edge Surfaced: Lane --> Prospect {
+    has lane: LaneId = LaneId.A;
     has at_rank: int = 0;
     has found_at: float = 0.0;
     has query: str = "";
+}
+
+edge Probe: Lane --> SearchProbe {
+    has opened_at: float = 0.0;
+}
+
+edge Widened: SearchProbe --> SearchProbe {
+    has reason: str = "";
 }
 
 edge HasEvidence: Prospect --> Evidence {
@@ -295,12 +331,15 @@ impl Prospect.to_view -> ProspectView {
         handle=self.handle,
         headline=self.headline,
         company=self.company,
+        linkedin_url=self.linkedin_url,
         email=self.email,
         email_source=self.email_source,
+        email_confidence=self.email_confidence,
         tier=self.tier,
         score=self.score,
         score_pre_crosslink=self.score_pre_crosslink,
         dropped_reason=self.dropped_reason,
+        is_warm_lead=self.is_warm_lead,
         convergence_lanes=self.convergence_lanes(),
         linkedin_quote=li_quote,
         github_artifact=gh_artifact
@@ -327,4 +366,41 @@ impl Lane.narrate(sentence: str, kind: ReasoningKind, t: float) -> Reasoning {
     note = Reasoning(t=t, sentence=sentence, kind=kind);
     self +>:Emitted(seq=seq):+> note;
     return note;
+}
+
+# Open a fresh probe on this lane's widening ladder.
+impl Lane.open_probe(query: str, keywords: str, date_posted: str) -> SearchProbe {
+    variant = len([self ->:Probe:->]);
+    probe = SearchProbe(
+        query=query,
+        keywords=keywords,
+        date_posted=date_posted,
+        variant=variant,
+        depth=0,
+        state=ProbeState.PENDING
+    );
+    self +>:Probe:+> probe;
+    return probe;
+}
+
+impl Lane.probes -> list[SearchProbe] {
+    return [self ->:Probe:->];
+}
+
+# A dry probe spawns a widened child. The traversal literally deepens where the
+# search struggled, and printgraph renders the dead branches alongside the live
+# ones - the search tree is the graph, not a log line.
+impl SearchProbe.widen(query: str, keywords: str, date_posted: str) -> SearchProbe {
+    self.state = ProbeState.DRY;
+    child = SearchProbe(
+        query=query,
+        keywords=keywords,
+        date_posted=date_posted,
+        variant=self.variant,
+        depth=self.depth + 1,
+        state=ProbeState.PENDING,
+        widened_from=self.query
+    );
+    self +>:Widened(reason="zero yield"):+> child;
+    return child;
 }
