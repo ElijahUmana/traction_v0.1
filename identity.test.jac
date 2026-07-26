@@ -9,6 +9,7 @@ is unsupported. These tests pin it.
 """
 
 import from time { time }
+import from gh { gh }
 
 
 """Two lanes surfacing the SAME human is the whole product. The multiplier has
@@ -198,4 +199,53 @@ test "commit harvesting reads author, committer and message trailers" {
     assert "b@x.io" in got;
     assert "c@x.io" in got;
     assert len(emails_from_commits([])) == 0;
+}
+
+
+"""REGRESSION. The heavy cross-link once matched github.com/torvalds to a
+prospect named "Jane Unrelated" and reported "similarity 1.00" while doing it.
+
+The cause was scoring the GitHub login against ITSELF: `attribution_score`
+weighs a local part against both the login and the name it is given and keeps
+the better result, so passing the same login as subject and target returned 1.0
+for every human alive. The negative control in proof_laned.jac caught it.
+
+This is the precise failure the module exists to prevent - a confident link to
+a stranger, which then feeds a personalised email about someone else's code -
+so it gets a permanent test. Network-guarded, because adjudication has to
+resolve the account before it can judge it."""
+test "an unrelated github link in a post is never matched to the prospect" {
+    if gh.has_token() {
+        stranger: Prospect = (root ++> Prospect(name="Jane Unrelated",
+                                                handle="jane-regression")) as Prospect;
+        res = stranger spawn CrossLinkToGithub(
+            posts_text="Great work by github.com/torvalds on this release!"
+        );
+        v = res.reports[0];
+        assert not (v["matched"] as bool), "a repo someone merely praised is not their account";
+        assert (v["considered"] as int) > 0, "the link WAS seen - this must not be reported as 'found nothing'";
+        assert "nothing corroborates" in (v["basis"] as str);
+        assert len([stranger ->:Identity:-> [?:GithubProfile]]) == 0, "no Identity edge may be written on a rejection";
+    }
+}
+
+
+"""A github.com link on the person's own LinkedIn contact card is the strongest
+signal available - LinkedIn only renders what they entered themselves."""
+test "a contact-card github link resolves to a verified identity" {
+    if gh.has_token() {
+        p: Prospect = (root ++> Prospect(name="Simon Willison",
+                                         handle="simonw-regression")) as Prospect;
+        res = p spawn CrossLinkToGithub(
+            contact_info_text="GitHub: https://github.com/simonw",
+            linkedin_company="Datasette"
+        );
+        v = res.reports[0];
+        assert (v["matched"] as bool);
+        assert (v["login"] as str) == "simonw";
+        assert (v["tier"] as str) == "verified";
+        linked: list[GithubProfile] = [p ->:Identity:-> [?:GithubProfile]];
+        assert len(linked) == 1, "a match must write exactly one Identity edge";
+        assert linked[0].login == "simonw";
+    }
 }

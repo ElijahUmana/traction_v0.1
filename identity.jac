@@ -469,8 +469,11 @@ walker CrossLinkToGithub {
             [self.about_text, "About section"],
             [self.posts_text, "a post they wrote"]
         ];
+        considered: int = 0;
+        last_rejection: str = "";
         for pair in sources {
             for login in logins_from_text(pair[0]) {
+                considered += 1;
                 verdict: dict[str, any] = self._adjudicate(login, pair[1], here);
                 if (verdict.get("matched", False) as bool) {
                     self._attach(here, login, verdict);
@@ -478,10 +481,19 @@ walker CrossLinkToGithub {
                     report verdict;
                     return;
                 }
+                last_rejection = verdict.get("basis", "") as str;
             }
         }
-        report {"handle": here.handle, "matched": False,
-                "basis": "no GitHub link found in contact info, About, or posts"};
+        # Distinguish "found nothing" from "found something and rejected it".
+        # Collapsing them hides the interesting case: a link WAS present and the
+        # disambiguator refused it, which is the system working, not failing.
+        if considered > 0 {
+            report {"handle": here.handle, "matched": False,
+                    "considered": considered, "basis": last_rejection};
+        } else {
+            report {"handle": here.handle, "matched": False, "considered": 0,
+                    "basis": "no GitHub link found in contact info, About, or posts"};
+        }
     }
 
     """Decide whether `login` is the same human as this prospect, and how sure."""
