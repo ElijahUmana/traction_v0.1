@@ -60,6 +60,36 @@ redundant, not broken; leave them alone rather than churning six files.
 > and implied every such walker was broken. That was over-broad. The
 > distinguishing factor is the manual append, not the name.
 
+### 0.15 ⛔ A walker whose entry ability is a NODE type is a SILENT NO-OP when spawned on root
+
+`POST /walker/<Name>` spawns on **root**. If the walker's only entry ability
+triggers on a node type, nothing fires: no error, no reports, HTTP 200, and the
+graph is untouched.
+
+```jac
+walker:pub RunResearch {
+    can start with Founder entry { ... }   # never fires from `root spawn`
+}
+```
+Measured before/after with graph counts — this is what it looks like:
+```
+[02 planned]              founders=1 runs=0 lanes=0 reasoning=0
+    spawn-on-ROOT    reports: 0        <- silent
+[03a after root-spawn]    founders=1 runs=0 lanes=0 reasoning=0   <- IDENTICAL
+    spawn-on-FOUNDER reports: 1
+[03 researched]           founders=1 runs=1 lanes=3 reasoning=265
+```
+
+**Fixes, pick one:**
+- Call the node-scoped route: `POST /walker/<Name>/{nd}` with the node's `jid`.
+- Or give the walker a `can ... with Root entry` that finds its anchor and
+  `visit`s it — what `PlanCampaign` does (`root -> Founder`), so it works from a
+  bare `root spawn`.
+
+**This is the failure mode that costs you a demo**: the button returns 200, the
+dashboard shows no error, and nothing happened. Always confirm a stage moved the
+graph, never that it returned 200.
+
 ### 0.2 Omitting `= []` on a walker list makes it a REQUIRED spawn parameter
 
 ```jac
@@ -394,6 +424,18 @@ calls `by llm()` must declare its own `glob llm: Model = Model(model_name=...)`.
 And the LLM's return `obj` must be declared **locally, not imported** — an
 imported obj arrives as a string reference and the call dies with
 `'str' object has no attribute 'fields'`.
+
+## 8a2. An unimported edge type in a traversal matches EVERYTHING
+
+If a module writes `[lanes ->:Probe:->]` without importing `Probe`, the hop is
+not narrowed - it duck-types across every out-edge. My first end-to-end
+instrumentation reported `probes=310 reasoning=310 prospects=310`, three
+different traversals returning the identical set, which is impossible. Importing
+`Probe`, `Emitted` and `Surfaced` gave the true `probes=3 reasoning=265
+prospects=0`.
+
+Import every edge type you traverse, not just the node types. Identical counts
+across supposedly-different traversals is the tell.
 
 ## 8b. Graph reads that silently under-count
 
