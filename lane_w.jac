@@ -20,11 +20,11 @@ lanes in research.jac.
 import time;
 import from contracts {
     LaneId, LaneState, ReasoningKind, EvidenceKind, EvidenceSource,
-    EmailSource, CompletenessTier
+    EmailSource, CompletenessTier, IdentityTier
 }
 import from schema {
-    Lane, Prospect, Evidence, Founder, Reasoning,
-    Surfaced, HasWarmLead, HasEvidence, Emitted, HasLane, Runs
+    Lane, Prospect, Evidence, Founder, Reasoning, LinkedinProfile,
+    Surfaced, HasWarmLead, HasEvidence, Emitted, HasLane, Runs, Identity
 }
 import from research { LaneBrowser }
 
@@ -156,6 +156,24 @@ glob ACTIVITY_JS: str = """
   return {items: out, count: out.length, url: location.href.split('?')[0]};
 })()
 """;
+# Contact Info lives behind an overlay route, reachable by URL. Navigating to it
+# is a read: no connect request, no message, no reaction, nothing she is
+# notified about. A profile view from the founder's own account is normal
+# behaviour; anything that touches her notifications is not.
+glob CONTACT_JS: str = """
+(function(){
+  const txt = (document.body.innerText || '').trim();
+  const start = txt.search(/contact info/i);
+  const slice = start >= 0 ? txt.slice(start, start + 1500) : txt.slice(0, 1200);
+  const links = Array.from(document.querySelectorAll('a[href]'))
+    .map(a => a.href)
+    .filter(h => /github\\.com|twitter\\.com|x\\.com|mailto:|^https?:/i.test(h)
+                 && !/linkedin\\.com\\/(feed|mynetwork|jobs|messaging|notifications)/i.test(h))
+    .slice(0, 25);
+  return {text: slice, links: links, url: location.href.split('?')[0]};
+})()
+""";
+
 
 """Turn LinkedIn's relative stamps ("3d", "2 weeks ago") into days, or -1."""
 def age_in_days(meta: str) -> int;
@@ -164,26 +182,30 @@ def age_in_days(meta: str) -> int;
 def founder_of(lane: Lane) -> Founder | None;
 
 
-walker LaneW {
+walker:pub LaneW {
     """Deep-reads the one warm lead. Guaranteed-yield: dry here is a failure."""
 
     has context_id: str = "";
     has warm_url: str = "";
     has warm_name: str = "";
+    has preferred_name: str = "";
     has warm_email: str = "";
     has hypothesis: str = "";
     has offline: bool = False;
     has fixture: dict = {};
 
     has browser: any = None;
-    has seq: int = 0;
     # NOT named `reports` — that collides with the built-in walker report
     # channel and silently collects nothing.
     has evidence_written: int = 0;
-    has prospect: any = None;
     has failure: str = "";
+    # The harvested text CrossLinkToGithub consumes. It takes text, not a
+    # browser — the lane owns the session, the cross-link owns the analysis.
+    has contact_info_text: str = "";
+    has about_text: str = "";
+    has posts_text: str = "";
+    has linkedin_company: str = "";
 
-    def narrate(here: Lane, sentence: str, kind: ReasoningKind);
     def attach_evidence(p: Prospect, quote: str, kind: EvidenceKind,
                         url: str, recency: int) -> bool;
 
@@ -191,17 +213,16 @@ walker LaneW {
         here.doctrine = LANE_W_DOCTRINE;
         here.state = LaneState.LAUNCHING;
         here.keywords = [self.warm_name] if self.warm_name else [];
-
-        self.narrate(here, LANE_W_DOCTRINE, ReasoningKind.PLAN);
+        here.narrate(LANE_W_DOCTRINE, ReasoningKind.PLAN, time.time());
 
         if not self.warm_url {
             here.state = LaneState.FAILED;
             self.failure = "no warm-lead LinkedIn URL was supplied at intake";
-            self.narrate(
-                here,
+            here.narrate(
                 "No warm lead was named at intake, so there is nobody for this "
-                + "lane to research. Saying so rather than inventing one.",
-                ReasoningKind.MISS
+                + "lane to research. Saying so rather than searching for the name "
+                + "and risking the wrong person.",
+                ReasoningKind.MISS, time.time()
             );
             disengage;
         }
@@ -212,35 +233,34 @@ walker LaneW {
         if not self.browser.open(self.context_id) {
             here.state = LaneState.FAILED;
             self.failure = self.browser.last_error;
-            self.narrate(
-                here,
+            here.narrate(
                 f"Could not open a browser session: {self.browser.last_error}. "
                 + "Lane W is the warm lead - this failure is worth surfacing loudly.",
-                ReasoningKind.MISS
+                ReasoningKind.MISS, time.time()
             );
             disengage;
         }
+        # Set the moment the session opens: the dashboard iframe needs this
+        # while the lane is still working, not at teardown.
         here.bb_session_id = self.browser.session_id;
         here.live_url = self.browser.live_url;
 
         # ---- the profile itself -------------------------------------------
         here.state = LaneState.SEARCHING;
         here.current_query = self.warm_url;
-        self.narrate(
-            here,
+        here.narrate(
             f"Opening {self.warm_name or 'the warm lead'}'s profile directly. "
             + "No search needed - we already know exactly who this is.",
-            ReasoningKind.PLAN
+            ReasoningKind.PLAN, time.time()
         );
 
         if not self.browser.goto(self.warm_url) {
             here.state = LaneState.FAILED;
             self.failure = f"could not load {self.warm_url}";
-            self.narrate(
-                here,
+            here.narrate(
                 f"Could not load {self.warm_url}. A failed navigation leaves the "
-                + "tab on an error page, so nothing below would be trustworthy.",
-                ReasoningKind.MISS
+                + "tab on an error page, so nothing read after it would be trustworthy.",
+                ReasoningKind.MISS, time.time()
             );
             self.browser.close_session();
             disengage;
@@ -252,127 +272,204 @@ walker LaneW {
         headline: str = str(profile.get("headline") or "");
         about: str = str(profile.get("about") or "");
         company: str = str(profile.get("company") or "");
+        self.about_text = about;
+        self.linkedin_company = company;
 
         if not name {
             here.state = LaneState.FAILED;
             self.failure = "profile page returned no name";
-            self.narrate(
-                here,
+            here.narrate(
                 "The profile loaded but no name could be read from it - most "
                 + "likely an auth wall rather than a real profile. Refusing to "
-                + "write a half-empty dossier.",
-                ReasoningKind.MISS
+                + "write a half-empty dossier on our one critical-path prospect.",
+                ReasoningKind.MISS, time.time()
             );
             self.browser.close_session();
             disengage;
         }
 
-        self.narrate(
-            here,
+        here.narrate(
             f"Read {name}: {headline[:110] if headline else 'no headline'}."
             + (f" At {company}." if company else ""),
-            ReasoningKind.OBSERVE
+            ReasoningKind.OBSERVE, time.time()
         );
 
-        # ---- create the prospect ------------------------------------------
-        handle = self.warm_url.rstrip("/").split("/")[-1];
-        p = here +>:Surfaced(
-            at_rank=1, found_at=time.time(), query="warm lead, named at intake"
-        ):+> Prospect(
-            name=name,
-            handle=handle,
-            headline=headline,
-            company=company,
-            linkedin_url=str(profile.get("url") or self.warm_url),
-            email=self.warm_email,
-            # Known at intake. This is the one prospect that never needs the
-            # email waterfall, so it can never fail the gate.
-            email_source=EmailSource.PROVIDED if self.warm_email else EmailSource.NONE,
-            email_confidence=1.0 if self.warm_email else 0.0,
-            # A = email plus content from one platform. RankAndSelect owns the
-            # final tiering and may promote to S once GitHub cross-links.
-            tier=CompletenessTier.A if self.warm_email else CompletenessTier.DROPPED
-        );
-        self.prospect = p;
-
-        # The warm-lead edge hangs off the Founder, not the Lane, because it
-        # outlives any single research run.
+        # ---- resolve the EXISTING prospect, never build a second one ------
+        # She is attached at intake via Founder -:HasWarmLead:-> Prospect. Two
+        # nodes for one human would split her evidence, break dedup, and could
+        # make her falsely satisfy is_converged() by looking like she was found
+        # from two directions when it is the same person twice - a false
+        # positive on the exact claim the demo closes on.
         f = founder_of(here);
-        if f is not None {
+        existing: list = [f ->:HasWarmLead:->] if f is not None else [];
+        p: Prospect = existing[0] if existing else Prospect(
+            name=name, handle="", tier=CompletenessTier.DROPPED
+        );
+        if existing {
+            here.narrate(
+                f"{name} is already on the graph as the warm lead. Attaching this "
+                + "lane's findings to that same person rather than creating a "
+                + "second node for her.",
+                ReasoningKind.JUDGE, time.time()
+            );
+        } elif f is not None {
             f +>:HasWarmLead(note="named at intake"):+> p;
         } else {
-            self.narrate(
-                here,
-                "Could not reach the Founder node from this lane, so the warm-lead "
-                + "edge was not written. The prospect still exists and is reachable "
-                + "from the lane.",
-                ReasoningKind.MISS
+            here.narrate(
+                "Could not reach the Founder from this lane, so the warm-lead edge "
+                + "was not written. The prospect is still reachable from the lane.",
+                ReasoningKind.MISS, time.time()
             );
         }
 
-        if headline {
-            self.attach_evidence(p, headline, EvidenceKind.HEADLINE, self.warm_url, -1);
-        }
-        if about {
-            self.attach_evidence(p, about[:600], EvidenceKind.ABOUT, self.warm_url, -1);
+        # Surfaced is what puts her on the dashboard and into RankAndSelect:
+        # list_prospects reads Founder -> Run -> Lane -> Surfaced -> Prospect,
+        # so HasWarmLead alone would leave her invisible.
+        here +>:Surfaced(
+            at_rank=1, found_at=time.time(), query="warm lead, named at intake"
+        ):+> p;
+
+        p.name = name;
+        p.preferred_name = self.preferred_name or self.warm_name or name;
+        p.handle = self.warm_url.rstrip("/").split("/")[-1];
+        p.headline = headline;
+        p.company = company;
+        p.linkedin_url = str(profile.get("url") or self.warm_url);
+        if self.warm_email {
+            p.email = self.warm_email;
+            # Known at intake: the one prospect that never needs the waterfall.
+            p.email_source = EmailSource.PROVIDED;
+            p.email_confidence = 1.0;
+            # A = email plus content from one platform. RankAndSelect owns final
+            # tiering and may promote to S once GitHub cross-links.
+            p.tier = CompletenessTier.A;
         }
 
-        # ---- recent activity — the part that makes outreach specific -------
+        p +>:Identity(
+            tier=IdentityTier.VERIFIED, basis="warm lead named at intake",
+            confidence=1.0
+        ):+> LinkedinProfile(
+            url=p.linkedin_url, handle=p.handle, name=name,
+            headline=headline, company=company, about=about
+        );
+
+        if headline {
+            self.attach_evidence(p, headline, EvidenceKind.HEADLINE, p.linkedin_url, -1);
+        }
+        if about {
+            self.attach_evidence(p, about[:600], EvidenceKind.ABOUT, p.linkedin_url, -1);
+        }
+
+        # ---- contact info: where a github.com/<login> link often lives -----
+        contact_url = self.warm_url.rstrip("/") + "/overlay/contact-info/";
+        if self.browser.goto(contact_url) {
+            contact: dict = self.browser.eval_json(CONTACT_JS) or {};
+            links: list = contact.get("links") or [];
+            self.contact_info_text = (str(contact.get("text") or "") + " "
+                                      + " ".join([str(x) for x in links])).strip();
+            gh = [x for x in links if "github.com" in str(x).lower()];
+            if gh {
+                here.narrate(
+                    f"Their contact info lists {gh[0]} - that is a GitHub handle we "
+                    + "can hand straight to the cross-link rather than guessing at.",
+                    ReasoningKind.CROSSLINK, time.time()
+                );
+            }
+        } else {
+            # A failed goto leaves the tab on an error page, so re-navigate
+            # rather than assume position before reading anything else.
+            here.narrate(
+                "Contact info would not open. Re-navigating to the profile before "
+                + "reading further rather than trusting the tab's position.",
+                ReasoningKind.MISS, time.time()
+            );
+            self.browser.goto(self.warm_url);
+        }
+
+        # ---- recent activity: what makes the email quotable ----------------
         activity_url = self.warm_url.rstrip("/") + "/recent-activity/all/";
-        self.narrate(
-            here,
+        here.narrate(
             "Now reading their recent activity. A job title tells us what they "
             + "are; what they posted last week tells us what they are dealing with.",
-            ReasoningKind.PLAN
+            ReasoningKind.PLAN, time.time()
         );
 
         if self.browser.goto(activity_url) {
             activity: dict = self.browser.eval_json(ACTIVITY_JS) or {};
             items: list = activity.get("items") or [];
             if items {
-                self.narrate(
-                    here,
+                here.narrate(
                     f"{len(items)} recent post{'s' if len(items) != 1 else ''} from "
                     + f"{name}. Reading for something worth quoting back.",
-                    ReasoningKind.OBSERVE
+                    ReasoningKind.OBSERVE, time.time()
                 );
+                bodies: list = [];
                 for item in items[:5] {
                     quote: str = str(item.get("text") or "");
+                    # The activity page echoes the person's own headline as a
+                    # card. It reads like prose, so the JS-side chrome filter
+                    # cannot catch it -- only the walker knows what the headline
+                    # actually is. Quoting someone's job title back to them as
+                    # "something you posted" is exactly the tell we are trying
+                    # to avoid.
+                    if quote and headline and (
+                        quote.strip()[:80] == headline.strip()[:80]
+                        or quote.strip() in headline
+                        or headline.strip() in quote
+                    ) {
+                        continue;
+                    }
+                    if quote and name and quote.strip() == name.strip() {
+                        continue;
+                    }
                     if quote {
+                        bodies.append(quote);
                         self.attach_evidence(
                             p, quote, EvidenceKind.POST, activity_url,
                             age_in_days(str(item.get("meta") or ""))
                         );
                     }
                 }
+                self.posts_text = "\n\n".join(bodies);
             } else {
-                # Not a failure. A quiet profile is a real finding, and outreach
-                # should know it has nothing recent to quote.
-                self.narrate(
-                    here,
+                # A quiet profile is a real finding, not a failure. Outreach
+                # needs to know it has nothing recent to quote.
+                here.narrate(
                     f"{name} has no readable recent activity. The opening line will "
                     + "have to lean on their headline and role instead of a quote.",
-                    ReasoningKind.OBSERVE
+                    ReasoningKind.OBSERVE, time.time()
                 );
             }
         } else {
-            self.narrate(
-                here,
+            here.narrate(
                 "Their activity feed would not load. Continuing with the profile "
                 + "evidence already gathered rather than failing the whole lane.",
-                ReasoningKind.MISS
+                ReasoningKind.MISS, time.time()
             );
         }
 
         # ---- done ----------------------------------------------------------
-        here.state = LaneState.DONE if self.evidence_written > 0 else LaneState.DRY;
-        self.narrate(
-            here,
-            f"Lane W complete. {self.evidence_written} pieces of evidence on {name}"
-            + (f", reachable at {self.warm_email}." if self.warm_email
-               else ", but no email was supplied at intake."),
-            ReasoningKind.YIELD if self.evidence_written > 0 else ReasoningKind.MISS
-        );
+        # OUTREACH hard-fails rather than send a generic email, so zero evidence
+        # on THIS prospect kills the whole back half of the demo. Say so plainly.
+        if self.evidence_written == 0 {
+            here.state = LaneState.DRY;
+            self.failure = "no quotable evidence found for the warm lead";
+            here.narrate(
+                f"Read {name}'s profile but found nothing quotable. Outreach "
+                + "refuses to send a generic email, so this is a hard failure on "
+                + "the one prospect the demo depends on.",
+                ReasoningKind.MISS, time.time()
+            );
+        } else {
+            here.state = LaneState.DONE;
+            here.narrate(
+                f"Lane W complete. {self.evidence_written} pieces of evidence on "
+                + f"{name}"
+                + (f", reachable at {self.warm_email}." if self.warm_email
+                   else ", but no email was supplied at intake."),
+                ReasoningKind.YIELD, time.time()
+            );
+        }
         self.browser.close_session();
         report p;
     }

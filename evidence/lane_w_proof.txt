@@ -1,0 +1,46 @@
+======================================================================
+Lane W — deep research on one warm lead
+======================================================================
+
+[0] warm lead: Xingzhi Zhu (Becky)
+[0] profile:   https://www.linkedin.com/in/xingzhi-zhu/
+[0] prospects attached at intake: 1
+
+[1] spawning LaneW on the Lane node...
+Prospect(name='Becky Zhu', handle='xingzhi-zhu', preferred_name='Becky', headline='Program Manager @Oracle | UCLA Business Economics & Statistics and Data Science', company='Oracle', linkedin_url='https://www.linkedin.com/in/xingzhi-zhu/', email='xingzhizhu6@gmail.com', email_source=<EmailSource.PROVIDED: 'provided'>, email_confidence=1.0, tier=<CompletenessTier.A: 'A'>, score=0.0, score_pre_crosslink=0.0, dropped_reason='')
+
+[2] lane state       done   (28.4s)
+[2] bb_session_id    1c9cc448-1ca3-4e79-a3f8-6fe963d01644
+[2] live_url         CAPTURED
+
+[3] analyst narration — 7 emissions
+    [plan] Lane W. One named warm lead, already trusted. Not searching - reading them properly, so the 
+    [plan] Opening Xingzhi Zhu's profile directly. No search needed - we already know exactly who this 
+    [observe] Read Becky Zhu: Program Manager @Oracle | UCLA Business Economics & Statistics and Data Scie
+    [judge] Becky Zhu is already on the graph as the warm lead. Attaching this lane's findings to that s
+    [plan] Now reading their recent activity. A job title tells us what they are; what they posted last
+    [observe] 1 recent post from Becky Zhu. Reading for something worth quoting back.
+    [yield] Lane W complete. 2 pieces of evidence on Becky Zhu, reachable at xingzhizhu6@gmail.com.
+
+[4] prospects written  1
+    name        Becky Zhu   preferred='Becky'
+    headline    Program Manager @Oracle | UCLA Business Economics & Statistics and Dat
+    company     Oracle
+    linkedin    https://www.linkedin.com/in/xingzhi-zhu/
+    email       xingzhizhu6@gmail.com [provided]
+    tier        A
+    warm lead   True
+    evidence    2 pieces
+      - [headline, undated] Program Manager @Oracle | UCLA Business Economics & Statistics a
+      - [about, undated] Hi, this is Xingzhi (Becky) Zhu, UCLA alum double majoring in Bu
+
+[5] warm-lead prospects before=1 after=1  (no duplicate created: True)
+[5] harvested for cross-link:
+      about_text        156 chars
+      posts_text        0 chars
+      contact_info_text 3574 chars
+      linkedin_company  'Oracle'
+
+======================================================================
+LANE_W_OK=True
+======================================================================

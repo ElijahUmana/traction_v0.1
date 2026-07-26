@@ -120,6 +120,12 @@ node Reasoning {
 node Prospect {
     has name: str;
     has handle: str;
+    # `name` is what the profile says — identity matching and cross-linking.
+    # `preferred_name` is what a human actually calls them, and is what every
+    # human-facing surface (an email greeting, the voice agent) must use.
+    # "Hi Xingzhi" from a system claiming deep personalisation, addressed to
+    # someone everyone calls Becky, undercuts the whole thesis.
+    has preferred_name: str = "";
     has headline: str = "";
     has company: str = "";
     has linkedin_url: str = "";

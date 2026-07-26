@@ -10,7 +10,7 @@ import time;
 import from contracts { LaneId, LaneState, RunStatus }
 import from schema {
     Founder, ResearchRun, Lane, Prospect, Reasoning,
-    Runs, HasLane, Emitted, Surfaced, HasEvidence
+    Runs, HasLane, Emitted, Surfaced, HasEvidence, HasWarmLead
 }
 import from lane_w { LaneW }
 import from browser.session { new_session }
@@ -22,29 +22,12 @@ with entry {
     print("Lane W — deep research on one warm lead");
     print("=" * 70);
 
-    # --- find a real profile the authenticated session can actually reach ---
-    print("\n[0] discovering a reachable profile from the live session...");
-    scout = new_session(context_id=context_id, persist=False, proxies=True);
-    warm_url = "";
-    try {
-        if scout.goto("https://www.linkedin.com/feed/", settle=2.5) {
-            found: dict = scout.eval_json("""
-                (function(){
-                  const me = document.querySelector('a[href*="/in/"][data-control-name], a.profile-card-profile-picture-container, nav a[href*="/in/"]');
-                  if (me) return {url: me.href.split('?')[0]};
-                  const any = document.querySelector('a[href*="/in/"]');
-                  return any ? {url: any.href.split('?')[0]} : {};
-                })()
-            """) or {};
-            warm_url = str(found.get("url") or "");
-        }
-    } finally {
-        scout.close();
-    }
-    if not warm_url {
-        raise RuntimeError("could not discover any profile URL from the live feed");
-    }
-    print(f"[0] target: {warm_url}");
+    warm_url = env("TEAMMATE_LINKEDIN_URL", required=True);
+    warm_name = env("TEAMMATE_NAME", required=True);
+    preferred = env("TEAMMATE_PREFERRED_NAME", fallback="");
+    warm_email = env("TEAMMATE_EMAIL", fallback="");
+    print(f"\n[0] warm lead: {warm_name} ({preferred or 'no preferred name'})");
+    print(f"[0] profile:   {warm_url}");
 
     # --- build the minimal graph Lane W expects ----------------------------
     founder = root ++> Founder(
@@ -57,14 +40,23 @@ with entry {
     );
     lane = run +>:HasLane(launched_at=time.time()):+> Lane(lane_id=LaneId.W);
 
+    # Intake attaches her BEFORE any lane runs. Lane W must find and reuse this
+    # node, not build a second one for the same human.
+    intake = founder +>:HasWarmLead(note="named at intake"):+> Prospect(
+        name=warm_name, handle="", preferred_name=preferred
+    );
+    before = len([founder ->:HasWarmLead:->]);
+    print(f"[0] prospects attached at intake: {before}");
+
     # --- run the real walker ------------------------------------------------
     print("\n[1] spawning LaneW on the Lane node...");
     t0 = time.monotonic();
     w = LaneW(
         context_id=context_id,
         warm_url=warm_url,
-        warm_name=env("TEAMMATE_NAME", fallback=""),
-        warm_email=env("TEAMMATE_EMAIL", fallback=""),
+        warm_name=warm_name,
+        preferred_name=preferred,
+        warm_email=warm_email,
         hypothesis="founders doing manual sales research"
     ) spawn lane;
     elapsed = round(time.monotonic() - t0, 1);
@@ -86,7 +78,7 @@ with entry {
     print(f"\n[4] prospects written  {len(prospects)}");
     ok = False;
     for p in prospects {
-        print(f"    name        {p.name}");
+        print(f"    name        {p.name}   preferred={p.preferred_name!r}");
         print(f"    headline    {p.headline[:70]}");
         print(f"    company     {p.company or '(none read)'}");
         print(f"    linkedin    {p.linkedin_url}");
@@ -102,7 +94,17 @@ with entry {
         ok = bool(p.name) and len(evidence) > 0 and bool(p.is_warm_lead());
     }
 
+    after = len([founder ->:HasWarmLead:->]);
+    one_node = (after == before) and len(prospects) == 1;
+    print(f"\n[5] warm-lead prospects before={before} after={after}  "
+          + f"(no duplicate created: {after == before})");
+    print(f"[5] harvested for cross-link:");
+    print(f"      about_text        {len(w.about_text)} chars");
+    print(f"      posts_text        {len(w.posts_text)} chars");
+    print(f"      contact_info_text {len(w.contact_info_text)} chars");
+    print(f"      linkedin_company  {w.linkedin_company!r}");
+
     print("\n" + "=" * 70);
-    print(f"LANE_W_OK={ok and lane.state == LaneState.DONE}");
+    print(f"LANE_W_OK={ok and lane.state == LaneState.DONE and one_node}");
     print("=" * 70);
 }

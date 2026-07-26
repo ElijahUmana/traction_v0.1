@@ -52,13 +52,6 @@ impl founder_of(lane: Lane) -> Founder | None {
 }
 
 
-impl LaneW.narrate(here: Lane, sentence: str, kind: ReasoningKind) {
-    self.seq += 1;
-    r = Reasoning(t=time.time(), sentence=sentence, kind=kind);
-    here +>:Emitted(seq=self.seq):+> r;
-}
-
-
 impl LaneW.attach_evidence(
     p: Prospect, quote: str, kind: EvidenceKind, url: str, recency: int
 ) -> bool {
