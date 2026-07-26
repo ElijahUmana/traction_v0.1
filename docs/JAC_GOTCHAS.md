@@ -60,7 +60,41 @@ def find(handle: str) -> list[Prospect] {
 compares the field to itself. Emits `W3040` (a warning, not an error) and
 returns wrong data. Rename the parameter: `def find(who: str)` → `handle == who`.
 
-### 0.4 Edge fields only bind through constructor parens
+### 0.4 Converting a `has` field to a `def` method silently breaks every call site
+
+A bare method reference is **always truthy**, so a guard that used to read a
+bool now always passes. `jac check` says nothing.
+
+```jac
+if p.is_warm_lead  { ... }   # was a field -> now a METHOD REF -> ALWAYS TRUE
+if p.is_warm_lead() { ... }  # correct
+```
+Measured:
+```
+if p.warm and p.email    ->  branch taken: True     # bound method ref is truthy
+if p.warm() and p.email  ->  branch taken: False
+```
+This bit `identity.jac:295` when `is_warm_lead` moved from a stored field to an
+edge-derived method: every prospect with an email took the warm-lead
+short-circuit, bypassing the entire six-step email waterfall and its attribution
+floor — the floor that catches the forked-repo case where we would have emailed
+the wrong human about someone else's repository.
+
+**When you convert a field to a method, grep every call site in the same
+commit.** The compiler will not help you.
+
+### 0.5 `disengage` does not work inside an impl-separated walker ability
+
+```jac
+impl MyWalker.start with Root entry {
+    disengage;        # E2083: 'disengage' is only valid inside a walker ability
+}
+```
+The compiler does not treat an impl-separated ability as an ability for this
+check. If an ability needs `disengage`, write its body **inline** in the walker.
+(`plan.jac` does exactly this and says why in a comment.)
+
+### 0.6 Edge fields only bind through constructor parens
 
 ```jac
 a +>:Surfaced(at_rank=3):+> p;    # ✅
@@ -308,6 +342,38 @@ filter passes four dead addresses per pool and reports them as successes.
 *(GHIDENT, measured on a live 15-candidate pool.)*
 
 ---
+
+## 8a. ⛔ byLLM: `ANTHROPIC_BASE_URL` in the shell breaks EVERY `by llm()` call
+
+Claude Code agent shells export `ANTHROPIC_BASE_URL` (a local proxy) and
+`ANTHROPIC_CUSTOM_HEADERS`. litellm honours them, routes the byLLM call to that
+proxy, and the proxy rejects the real Anthropic key from `.env`:
+
+```
+LLM AuthenticationError: AnthropicException -
+{"type":"error","error":{"type":"authentication_error",
+ "message":"Missing or invalid local proxy token"}}
+```
+
+The key in `.env` is fine. The environment is what is wrong. Fix — unset before
+running anything that calls an LLM:
+
+```bash
+unset ANTHROPIC_BASE_URL ANTHROPIC_CUSTOM_HEADERS ANTHROPIC_AUTH_TOKEN
+```
+
+Verified both directions on `PlanCampaign`: with the vars set, `source` came
+back `fallback:litellm.AuthenticationError...`; with them unset, the same call
+returned a real plan. **This affects every `by llm()` in the product** —
+`plan.draft_icp`, `research.classify_texts`, `ComposeOutreach`, `KbQuery`,
+`OnCallEnd`. If the demo machine has these exported, every LLM feature silently
+degrades to its fallback (or fails, where there is no fallback).
+
+Also: jac.toml's `[byllm.model]` does NOT bind the ambient model. A module that
+calls `by llm()` must declare its own `glob llm: Model = Model(model_name=...)`.
+And the LLM's return `obj` must be declared **locally, not imported** — an
+imported obj arrives as a string reference and the call dies with
+`'str' object has no attribute 'fields'`.
 
 ## 8b. Graph reads that silently under-count
 

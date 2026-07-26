@@ -41,6 +41,7 @@ import from schema {
 }
 
 # --- teammate endpoint modules are imported here as they land ---------------
+import from plan { PlanCampaign, IcpDraft }
 import from research {
     RunResearch, LinkedInLane, LaneA, LaneB, LaneC,
     LaneResult, LaneSpec, CommentVerdict
