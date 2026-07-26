@@ -1,0 +1,56 @@
+{
+  "ok": true,
+  "data": {
+    "result": {
+      "_jac_type": "LiveFeed",
+      "_jac_id": "161c88ebc41f4c95b1a50a3e503a63b5",
+      "_jac_archetype": "walker",
+      "batch": {
+        "next_seq": 7,
+        "reasoning_count": 7,
+        "lane_count": 4,
+        "prospect_count": 3
+      },
+      "kind": "reasoning_batch",
+      "note": "round 0",
+      "reports": [
+        {
+          "kind": "reasoning_batch",
+          "seq": 0,
+          "batch": {
+            "next_seq": 7,
+            "reasoning_count": 7,
+            "lane_count": 4,
+            "prospect_count": 3
+          },
+          "note": "round 0"
+        }
+      ],
+      "restspec": {
+        "_jac_type": "RestSpecs",
+        "_jac_id": "575450644cf94939a1abb324fb75db64",
+        "_jac_archetype": "archetype",
+        "broadcast": true,
+        "envelope": true,
+        "method": "",
+        "path": "",
+        "produces": "",
+        "protocol": "websocket"
+      },
+      "seq": 0
+    },
+    "reports": [
+      {
+        "kind": "reasoning_batch",
+        "seq": 0,
+        "batch": {
+          "next_seq": 7,
+          "reasoning_count": 7,
+          "lane_count": 4,
+          "prospect_count": 3
+        },
+        "note": "round 0"
+      }
+    ]
+  }
+}

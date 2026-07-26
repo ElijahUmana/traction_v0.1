@@ -88,11 +88,15 @@ test "the newest run wins when several exist" {
 }
 
 
-test "lanes project in A-B-C-D order and carry the iframe url" {
+test "lanes project in lane_id order and every one carries an iframe url" {
+    # Deliberately NOT asserting a fixed count: LaneId now carries W (the
+    # warm-lead lane) and more may follow. The contract is ordering + live_url,
+    # not arity - a test that hard-codes 4 would fail the day W is wired in.
     _mk_run(4000.0);
     views = list_lanes();
-    assert len(views) == 4, f"expected 4 lanes, got {len(views)}";
-    assert [str(v.lane_id) for v in views] == ["A", "B", "C", "D"], "lanes out of order";
+    assert len(views) >= 4, f"expected at least 4 lanes, got {len(views)}";
+    ids = [str(v.lane_id) for v in views];
+    assert ids == sorted(ids), f"lanes not in lane_id order: {ids}";
     for v in views {
         assert v.live_url != "", f"lane {v.lane_id} has no live_url to embed";
         assert v.jid != "", "LaneView must carry a stable jid for the frontend";

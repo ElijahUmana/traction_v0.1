@@ -1,0 +1,9 @@
+data: {"kind": "lanes", "lanes": [{"lane_id": "A", "state": "searching", "live_url": "https://www.browserbase.com/devtools-fullscreen/inspector.html?rehearsal=A", "doctrine": "comment mining under mid-tier practitioner posts"}, {"lane_id": "B", "state": "searching", "live_url": "https://www.browserbase.com/devtools-fullscreen/inspector.html?rehearsal=B", "doctrine": "post authorship - first-person problem statements"}, {"lane_id": "C", "state": "searching", "live_url": "https://www.browserbase.com/devtools-fullscreen/inspector.html?rehearsal=C", "doctrine": "synonym sweep - defeats vocabulary lock-in"}, {"lane_id": "D", "state": "searching", "live_url": "https://www.browserbase.com/devtools-fullscreen/inspector.html?rehearsal=D", "doctrine": "GitHub-first, programmatic"}]}
+
+data: {"kind": "reasoning", "seq": 0, "t": 1785107480.8075242, "lane_id": "A", "sentence": "Scanning comments under mid-tier practitioner posts; skipping the 90%-'great post!' megathreads by design.", "kind_of": "observe"}
+
+data: {"kind": "reasoning", "seq": 1, "t": 1785107480.812588, "lane_id": "A", "sentence": "Found a commenter describing their eval harness breaking weekly - that is a first-person problem statement, not clout.", "kind_of": "judge"}
+
+data: {"kind": "reasoning", "seq": 2, "t": 1785107480.82238, "lane_id": "B", "sentence": "Post author writes in first person about shipping without regression tests on prompts. Keeping.", "kind_of": "observe"}
+
+data: {"kind": "reasoning", "seq": 3, "t": 1785107480.827708, "lane_id": "C", "sentence": "'LLM ops' is returning vendor marketing, not practitioners. This angle is dry - switching to 'model monitoring'.", "kind_of": "pivot"}

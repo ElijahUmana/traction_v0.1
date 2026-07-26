@@ -67,13 +67,34 @@ Objects on the wire carry three bookkeeping keys. Ignore all three.
 
 > **Every object we return carries an explicit `jid` field. That is the stable identity. Use `jid` as your React key, your map key, and your diff key. Never `_jac_id`.**
 
+### 1.2 Enums are bare strings — and it is the **value**, not the member name
+
+Enums are `str`-backed and serialize as plain strings. There is no `{"value": ...}` wrapper.
+
+**The string you receive is the enum's VALUE, which is not always the member name.** `LaneState.SEARCHING` arrives as `"searching"`, lowercase. A `switch` on `"SEARCHING"` silently never matches — no error, just a panel that never changes state.
+
+Captured live from the running server:
+
+| Enum | Member | **On the wire** |
+|---|---|---|
+| `LaneId` | `A` | `"A"` |
+| `LaneState` | `SEARCHING` | **`"searching"`** |
+| `RunStatus` | `RUNNING` | **`"running"`** |
+| `CompletenessTier` | `S` | `"S"` |
+| `EmailSource` | `NONE` | **`"none"`** |
+| `ReasoningKind` | `OBSERVE` | **`"observe"`** |
+
+Rule of thumb: **`LaneId` and `CompletenessTier` are uppercase; everything else is lowercase.** Compare case-sensitively against the values in the tables below, or lowercase before comparing.
+
 ---
 
 ## 2. Read endpoints
 
 ### 2.1 `POST /function/list_lanes` → `LaneView[]`
 
-The four research lanes. Sorted A, B, C, D. **`live_url` is the Browserbase URL you embed in the panel iframe** (§6).
+The research lanes, sorted by `lane_id`. **`live_url` is the Browserbase URL you embed in the panel iframe** (§6).
+
+> **There are FIVE lanes, not four: A, B, C, D and W.** Do not hard-code four panels, and do not assume the list is fixed — render whatever the array contains. `W` is the warm-lead lane and behaves differently from the rest; see §2.1.1.
 
 Request: `{}`
 
@@ -107,8 +128,19 @@ Request: `{}`
 | `current_query` | `string` | the query the lane is running right now |
 | `reasoning_count`, `prospect_count` | `int` | cheap counters for badges |
 
-`state` is one of: `idle`, `launching`, `searching`, `reading`, `crosslinking`, `dry`, `done`, `failed`.
-`dry` is not an error — it means the angle yielded nothing and the lane is pivoting. Style it as "info", not "danger".
+`state` is one of: `idle`, `launching`, `searching`, `reading`, `crosslinking`, `dry`, `done`, `failed` — **all lowercase on the wire** (§1.2).
+
+Two states carry meaning worth styling deliberately:
+- **`dry` is not an error.** The angle yielded nothing and the lane is pivoting. Style it as "info", never "danger" — an agent that says *"this angle is dry, switching"* reads as smarter than one that got lucky.
+- `failed` is the only genuine error state.
+
+### 2.1.1 Lane W is not like the others
+
+`W` is the **warm-lead** lane. Instead of searching for unknown people, it deep-researches **one known person** — the human the demo actually emails, calls and books.
+
+- It surfaces that person through the same `Surfaced` relationship every other lane uses, so **she appears in `list_prospects` normally**. There is no special-case endpoint and no bypass; if she is on the ledger it is because a lane put her there.
+- Its panel should read as *dossier assembly on a named person*, not *search*. `current_query` will look different, and the interesting output is her `Evidence`, not a result count.
+- Treat `W` as ordinary data. Filter panels by `lane_id` rather than positional index, or Lane W will land in whichever slot you left over.
 
 ### 2.2 `POST /function/list_prospects` → `ProspectView[]`
 
@@ -331,6 +363,51 @@ setInterval(async () => {
 }, 750);
 ```
 
+### 4.4 The pump is a single point of failure — every panel MUST have a fallback
+
+If the pump dies mid-demo, the socket stays connected and simply goes quiet. **Every panel freezes, and it looks exactly like the frozen-graph bug in §4.3.** Do not let a dead pump be indistinguishable from a broken product.
+
+**Required behaviour: if a panel receives no data frame for 3 seconds, it starts polling the plain-HTTP read endpoints itself** until frames resume. HTTP is the reliably-fresh path (that is the whole basis of this design), so the fallback is strictly correct — just slower and chattier.
+
+```js
+let lastFrame = Date.now();
+let polling = null;
+
+ws.onmessage = (e) => {
+  const msg = JSON.parse(e.data);
+  if (msg.type === "ping" || msg.type === "pong") return;  // NOT a data frame
+  lastFrame = Date.now();
+  if (polling) { clearInterval(polling); polling = null; }  // pump is back
+  applyBatch(msg.data.reports[0].batch);
+};
+
+setInterval(() => {
+  if (Date.now() - lastFrame < 3000 || polling) return;
+  console.warn("pump silent >3s - falling back to HTTP polling");
+  polling = setInterval(async () => {
+    const b = await call("feed_since", { since });
+    since = b.next_seq;
+    applyBatch(b);
+  }, 1000);
+}, 1000);
+```
+
+Note the ping/pong exclusion: server heartbeats arrive every 30 s and must **not** reset `lastFrame`, or a dead pump on a healthy socket will never be detected.
+
+### 4.5 Where the pump runs, and what supervises it
+
+**Recommendation: the pump is the dashboard itself — a browser tab, not a server process.**
+
+The dashboard shell elects itself pump on load and runs the `setInterval` in §4.3. Rationale:
+
+- **Nothing extra to supervise.** No sidecar, no systemd unit, no extra line in the runbook, nothing that dies when the laptop sleeps independently of the thing displaying the result.
+- **Its failure mode is benign.** If the tab is closed there is no dashboard to feed anyway. If it is reloaded, the pump restarts automatically.
+- **It cannot be a `flow` task or a server thread.** Server-side code cannot trigger a broadcast at all (§4.3) — `ws_manager` is a private member of the server object. A server-side pump would have to talk to its own WebSocket as a client, which is strictly worse than a browser doing it.
+
+Combined with the §4.4 fallback, **there is no single point of failure**: if the pump tab dies, every other panel notices within 3 s and self-serves over HTTP.
+
+If you would rather not think about any of this: **skip the WebSocket entirely and poll `feed_since`.** That path has no pump, no election, and no fallback logic. It is the recommended option under time pressure.
+
 ---
 
 ## 5. SSE fallback — `POST /function/feed_backlog`
@@ -383,15 +460,34 @@ ops/restart.sh            # keep the graph
 ops/restart.sh --clean    # wipe the graph too (after a schema change)
 ```
 
-Use the script rather than `jac start` directly. It guarantees the old process is dead **before** the data directory is wiped, waits for health, warms the first anonymous request, and fails loudly if the WebSocket routes did not register.
+Use the script rather than `jac start` directly. It guarantees the old process is dead **before** the data directory is wiped, sources `.env`, holds stdin open, waits for health, warms the first anonymous request, and fails loudly if the WebSocket routes did not register.
+
+The launch line it runs, and why each half matters:
+
+```bash
+set -a && . ./.env && set +a && sleep infinity | jac start main.jac --no-client
+```
+
+- **`. ./.env`** — `jac start` does **not** read `.env`. Without this, litellm never sees `ANTHROPIC_API_KEY` and **every `by llm()` call silently returns null while the server looks perfectly healthy.** No error, no warning; walkers just quietly produce nothing.
+- **`sleep infinity |`** — `jac start` exits on stdin EOF. `< /dev/null` serves fine for a while, then logs `drain: started` and dies mid-session. This holds stdin open for the life of the process.
 
 To develop against a populated graph without waiting for a real research run:
 
 ```bash
-python3 ops/seed_and_capture.py    # seeds a run + 4 lanes + reasoning + a 3-row ledger
+python3 ops/seed_and_capture.py    # seeds a run + lanes + reasoning + a 3-row ledger
 ```
 
 That seeding is rehearsal-only scaffolding (`feedseed.jac`) and is not part of the product path.
+
+### 7.1 We stay a pure API — you run your own client
+
+`jac.toml` is `kind = "service"`. Jac can also serve the UI itself (`kind = "web-app"` plus a `def:pub app`), and **the recommendation is that we do not do that.**
+
+- The dashboard is being built separately by the frontend teammates, in their own stack, with their own dev server. Flipping to `web-app` would put a client build step in the server's startup path on demo day, for zero functional gain.
+- CORS is already wide open (`allow_origins=['*']`, hardwired in single-process `jac start`), so a client on `localhost:5173` or any other origin talks to `:8000` with no proxy and no config.
+- Keeping the API pure means a frontend build failure cannot take the API down, and the API can be restarted without touching the UI. On a deadline those are the failure modes that matter.
+
+**So: point your dev server at `http://127.0.0.1:8000` and build however you like.** Nothing on our side needs to change, and nobody needs to flip `kind`.
 
 ### Two failure modes worth recognising
 

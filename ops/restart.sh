@@ -45,8 +45,33 @@ if [ "${1:-}" = "--clean" ]; then
   rm -rf .jac/data
 fi
 
-echo "==> starting (stdin detached - jac start exits when stdin closes)"
-nohup jac start main.jac --no-client -p "$PORT" < /dev/null > "$LOG" 2>&1 &
+echo "==> starting"
+# Two things about this launch line, both learned the hard way:
+#
+#  1. `jac start` does NOT read .env. Without sourcing it, litellm never sees
+#     ANTHROPIC_API_KEY and every `by llm()` call returns null while the server
+#     looks perfectly healthy. That failure is invisible until a walker quietly
+#     produces nothing.
+#  2. `jac start` exits on stdin EOF. `< /dev/null` therefore serves fine for a
+#     while and then logs `drain: started` and dies mid-session. `sleep infinity |`
+#     holds stdin open for the life of the process.
+#
+# Do not "simplify" either half of this.
+if [ -f ./.env ]; then
+  echo "    sourcing .env (jac start does not read it itself)"
+  set -a
+  # shellcheck disable=SC1091
+  . ./.env
+  set +a
+  if [ -z "${ANTHROPIC_API_KEY:-}" ]; then
+    echo "    !! WARNING: ANTHROPIC_API_KEY still unset - every by llm() call will return null"
+  fi
+else
+  echo "    !! WARNING: no .env found - every by llm() call will return null"
+fi
+
+nohup sh -c "sleep infinity | jac start main.jac --no-client -p $PORT" \
+  > "$LOG" 2>&1 &
 
 for i in $(seq 1 90); do
   if curl -s -m 2 -o /dev/null "http://127.0.0.1:$PORT/healthz" 2>/dev/null; then

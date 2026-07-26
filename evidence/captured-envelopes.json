@@ -1,0 +1,421 @@
+{
+  "get_run_state": {
+    "ok": true,
+    "type": "response",
+    "data": {
+      "result": {
+        "_jac_type": "RunStateView",
+        "_jac_id": "9e72a4fce78643a888c9b46fad186d60",
+        "_jac_archetype": "archetype",
+        "converged_count": 1,
+        "dropped_count": 1,
+        "exists": true,
+        "finished_at": 0.0,
+        "jid": "d5c870b3b6094f76a09a92f960e6f592",
+        "lane_count": 4,
+        "prospect_count": 3,
+        "reasoning_count": 6,
+        "started_at": 1785108590.042333,
+        "status": "running",
+        "surviving_count": 2
+      },
+      "reports": []
+    },
+    "error": null,
+    "meta": {
+      "extra": {
+        "http_status": 200
+      }
+    }
+  },
+  "list_lanes": {
+    "ok": true,
+    "type": "response",
+    "data": {
+      "result": [
+        {
+          "_jac_type": "LaneView",
+          "_jac_id": "21954bdbcb044ed7838bb5d30e70c4fa",
+          "_jac_archetype": "archetype",
+          "bb_session_id": "rehearsal-session-A",
+          "current_query": "",
+          "doctrine": "comment mining under mid-tier practitioner posts",
+          "jid": "504fa870b7e344afa877f0f936a6eecd",
+          "lane_id": "A",
+          "live_url": "https://www.browserbase.com/devtools-fullscreen/inspector.html?rehearsal=A",
+          "prospect_count": 1,
+          "reasoning_count": 2,
+          "state": "searching"
+        },
+        {
+          "_jac_type": "LaneView",
+          "_jac_id": "ec9baf6b5232480ebb3966ecbf073a5d",
+          "_jac_archetype": "archetype",
+          "bb_session_id": "rehearsal-session-B",
+          "current_query": "",
+          "doctrine": "post authorship - first-person problem statements",
+          "jid": "c055ca12f6c1440b86ebbbc2d9febd59",
+          "lane_id": "B",
+          "live_url": "https://www.browserbase.com/devtools-fullscreen/inspector.html?rehearsal=B",
+          "prospect_count": 1,
+          "reasoning_count": 1,
+          "state": "searching"
+        },
+        {
+          "_jac_type": "LaneView",
+          "_jac_id": "fd10f75b2eb74dd888f808863a9e7752",
+          "_jac_archetype": "archetype",
+          "bb_session_id": "rehearsal-session-C",
+          "current_query": "",
+          "doctrine": "synonym sweep - defeats vocabulary lock-in",
+          "jid": "374c9fc5000541f2a807b4ea32067c8b",
+          "lane_id": "C",
+          "live_url": "https://www.browserbase.com/devtools-fullscreen/inspector.html?rehearsal=C",
+          "prospect_count": 1,
+          "reasoning_count": 1,
+          "state": "searching"
+        },
+        {
+          "_jac_type": "LaneView",
+          "_jac_id": "2a9289595151406488c30cda41ebdb94",
+          "_jac_archetype": "archetype",
+          "bb_session_id": "rehearsal-session-D",
+          "current_query": "",
+          "doctrine": "GitHub-first, programmatic",
+          "jid": "00cd5020558b45bfb25bce07a49f988d",
+          "lane_id": "D",
+          "live_url": "https://www.browserbase.com/devtools-fullscreen/inspector.html?rehearsal=D",
+          "prospect_count": 1,
+          "reasoning_count": 2,
+          "state": "searching"
+        }
+      ],
+      "reports": []
+    },
+    "error": null,
+    "meta": {
+      "extra": {
+        "http_status": 200
+      }
+    }
+  },
+  "list_prospects": {
+    "ok": true,
+    "type": "response",
+    "data": {
+      "result": [
+        {
+          "_jac_type": "ProspectView",
+          "_jac_id": "07b14cd666a743b6937e7aa58620b697",
+          "_jac_archetype": "archetype",
+          "company": "Rehearsal Co",
+          "convergence_lanes": [
+            "A",
+            "D"
+          ],
+          "dropped_reason": "",
+          "email": "rehearsal.survivor@example.invalid",
+          "email_confidence": 0.0,
+          "email_source": "none",
+          "github_artifact": "",
+          "handle": "rehearsal-practitioner",
+          "headline": "Staff engineer, ML platform",
+          "is_warm_lead": false,
+          "jid": "f53fc36be045485daddfe15e7906b7aa",
+          "linkedin_quote": "",
+          "linkedin_url": "",
+          "name": "Rehearsal Practitioner",
+          "score": 0.94,
+          "score_pre_crosslink": 0.71,
+          "tier": "S"
+        },
+        {
+          "_jac_type": "ProspectView",
+          "_jac_id": "6f3c03c6e10d4d05ac30e31dc64fee56",
+          "_jac_archetype": "archetype",
+          "company": "Second Co",
+          "convergence_lanes": [
+            "B"
+          ],
+          "dropped_reason": "",
+          "email": "rehearsal.second@example.invalid",
+          "email_confidence": 0.0,
+          "email_source": "none",
+          "github_artifact": "",
+          "handle": "rehearsal-second",
+          "headline": "Founding engineer",
+          "is_warm_lead": false,
+          "jid": "2da4dddadda54384ac14d00df35c2cb3",
+          "linkedin_quote": "",
+          "linkedin_url": "",
+          "name": "Rehearsal Second",
+          "score": 0.62,
+          "score_pre_crosslink": 0.62,
+          "tier": "A"
+        },
+        {
+          "_jac_type": "ProspectView",
+          "_jac_id": "4b9c0ec6fb5d48ca9f16cd5858f54d84",
+          "_jac_archetype": "archetype",
+          "company": "",
+          "convergence_lanes": [
+            "C"
+          ],
+          "dropped_reason": "no email resolvable after all six waterfall steps",
+          "email": "",
+          "email_confidence": 0.0,
+          "email_source": "none",
+          "github_artifact": "",
+          "handle": "rehearsal-dropped",
+          "headline": "Indie hacker",
+          "is_warm_lead": false,
+          "jid": "2a4986d8ea0a46029a0a74bb5a828df6",
+          "linkedin_quote": "",
+          "linkedin_url": "",
+          "name": "Rehearsal Dropped",
+          "score": 0.0,
+          "score_pre_crosslink": 0.0,
+          "tier": "DROPPED"
+        }
+      ],
+      "reports": []
+    },
+    "error": null,
+    "meta": {
+      "extra": {
+        "http_status": 200
+      }
+    }
+  },
+  "feed_since": {
+    "ok": true,
+    "type": "response",
+    "data": {
+      "result": {
+        "_jac_type": "FeedBatch",
+        "_jac_id": "252ab0a3a7e2496baaf3e30f03f4720c",
+        "_jac_archetype": "archetype",
+        "lanes": [
+          {
+            "_jac_type": "LaneView",
+            "_jac_id": "01decab4b96a4cf2a1b56d49424cb254",
+            "_jac_archetype": "archetype",
+            "bb_session_id": "rehearsal-session-A",
+            "current_query": "",
+            "doctrine": "comment mining under mid-tier practitioner posts",
+            "jid": "504fa870b7e344afa877f0f936a6eecd",
+            "lane_id": "A",
+            "live_url": "https://www.browserbase.com/devtools-fullscreen/inspector.html?rehearsal=A",
+            "prospect_count": 1,
+            "reasoning_count": 2,
+            "state": "searching"
+          },
+          {
+            "_jac_type": "LaneView",
+            "_jac_id": "20d58c9f75824a76bcabdb7303004db7",
+            "_jac_archetype": "archetype",
+            "bb_session_id": "rehearsal-session-B",
+            "current_query": "",
+            "doctrine": "post authorship - first-person problem statements",
+            "jid": "c055ca12f6c1440b86ebbbc2d9febd59",
+            "lane_id": "B",
+            "live_url": "https://www.browserbase.com/devtools-fullscreen/inspector.html?rehearsal=B",
+            "prospect_count": 1,
+            "reasoning_count": 1,
+            "state": "searching"
+          },
+          {
+            "_jac_type": "LaneView",
+            "_jac_id": "343e9129088d4c82a40fda1f912d85be",
+            "_jac_archetype": "archetype",
+            "bb_session_id": "rehearsal-session-C",
+            "current_query": "",
+            "doctrine": "synonym sweep - defeats vocabulary lock-in",
+            "jid": "374c9fc5000541f2a807b4ea32067c8b",
+            "lane_id": "C",
+            "live_url": "https://www.browserbase.com/devtools-fullscreen/inspector.html?rehearsal=C",
+            "prospect_count": 1,
+            "reasoning_count": 1,
+            "state": "searching"
+          },
+          {
+            "_jac_type": "LaneView",
+            "_jac_id": "927716736a08403b9362ebc361ec8a2a",
+            "_jac_archetype": "archetype",
+            "bb_session_id": "rehearsal-session-D",
+            "current_query": "",
+            "doctrine": "GitHub-first, programmatic",
+            "jid": "00cd5020558b45bfb25bce07a49f988d",
+            "lane_id": "D",
+            "live_url": "https://www.browserbase.com/devtools-fullscreen/inspector.html?rehearsal=D",
+            "prospect_count": 1,
+            "reasoning_count": 2,
+            "state": "searching"
+          }
+        ],
+        "next_seq": 6,
+        "prospects": [
+          {
+            "_jac_type": "ProspectView",
+            "_jac_id": "f88dffe6892746e296febff77ee2728e",
+            "_jac_archetype": "archetype",
+            "company": "Rehearsal Co",
+            "convergence_lanes": [
+              "A",
+              "D"
+            ],
+            "dropped_reason": "",
+            "email": "rehearsal.survivor@example.invalid",
+            "email_confidence": 0.0,
+            "email_source": "none",
+            "github_artifact": "",
+            "handle": "rehearsal-practitioner",
+            "headline": "Staff engineer, ML platform",
+            "is_warm_lead": false,
+            "jid": "f53fc36be045485daddfe15e7906b7aa",
+            "linkedin_quote": "",
+            "linkedin_url": "",
+            "name": "Rehearsal Practitioner",
+            "score": 0.94,
+            "score_pre_crosslink": 0.71,
+            "tier": "S"
+          },
+          {
+            "_jac_type": "ProspectView",
+            "_jac_id": "c1c96ec68670462f9bc9f3620de3e29f",
+            "_jac_archetype": "archetype",
+            "company": "Second Co",
+            "convergence_lanes": [
+              "B"
+            ],
+            "dropped_reason": "",
+            "email": "rehearsal.second@example.invalid",
+            "email_confidence": 0.0,
+            "email_source": "none",
+            "github_artifact": "",
+            "handle": "rehearsal-second",
+            "headline": "Founding engineer",
+            "is_warm_lead": false,
+            "jid": "2da4dddadda54384ac14d00df35c2cb3",
+            "linkedin_quote": "",
+            "linkedin_url": "",
+            "name": "Rehearsal Second",
+            "score": 0.62,
+            "score_pre_crosslink": 0.62,
+            "tier": "A"
+          },
+          {
+            "_jac_type": "ProspectView",
+            "_jac_id": "37460eeeffee4eacbc50a22498ee109e",
+            "_jac_archetype": "archetype",
+            "company": "",
+            "convergence_lanes": [
+              "C"
+            ],
+            "dropped_reason": "no email resolvable after all six waterfall steps",
+            "email": "",
+            "email_confidence": 0.0,
+            "email_source": "none",
+            "github_artifact": "",
+            "handle": "rehearsal-dropped",
+            "headline": "Indie hacker",
+            "is_warm_lead": false,
+            "jid": "2a4986d8ea0a46029a0a74bb5a828df6",
+            "linkedin_quote": "",
+            "linkedin_url": "",
+            "name": "Rehearsal Dropped",
+            "score": 0.0,
+            "score_pre_crosslink": 0.0,
+            "tier": "DROPPED"
+          }
+        ],
+        "reasoning": [
+          {
+            "_jac_type": "ReasoningView",
+            "_jac_id": "e062420962654ed3ab3b05a7e3e19746",
+            "_jac_archetype": "archetype",
+            "kind": "observe",
+            "lane_id": "A",
+            "sentence": "Scanning comments under mid-tier practitioner posts; skipping the 90%-'great post!' megathreads by design.",
+            "seq": 0,
+            "t": 1785108590.272059
+          },
+          {
+            "_jac_type": "ReasoningView",
+            "_jac_id": "5178e4026e034c49af3eb7dd7dae41c9",
+            "_jac_archetype": "archetype",
+            "kind": "judge",
+            "lane_id": "A",
+            "sentence": "Found a commenter describing their eval harness breaking weekly - that is a first-person problem statement, not clout.",
+            "seq": 1,
+            "t": 1785108590.3252091
+          },
+          {
+            "_jac_type": "ReasoningView",
+            "_jac_id": "70a400403b034063bd563a3f8e89ab5e",
+            "_jac_archetype": "archetype",
+            "kind": "observe",
+            "lane_id": "B",
+            "sentence": "Post author writes in first person about shipping without regression tests on prompts. Keeping.",
+            "seq": 2,
+            "t": 1785108590.376641
+          },
+          {
+            "_jac_type": "ReasoningView",
+            "_jac_id": "61e1095ca26c4d8f82daf89ca90239e1",
+            "_jac_archetype": "archetype",
+            "kind": "pivot",
+            "lane_id": "C",
+            "sentence": "'LLM ops' is returning vendor marketing, not practitioners. This angle is dry - switching to 'model monitoring'.",
+            "seq": 3,
+            "t": 1785108590.401214
+          },
+          {
+            "_jac_type": "ReasoningView",
+            "_jac_id": "e615cfea6a064b3aa498e6d5ef831e3c",
+            "_jac_archetype": "archetype",
+            "kind": "observe",
+            "lane_id": "D",
+            "sentence": "GitHub search: repos touching eval harnesses updated in the last 30 days, 2+ contributors.",
+            "seq": 4,
+            "t": 1785108590.4368901
+          },
+          {
+            "_jac_type": "ReasoningView",
+            "_jac_id": "42df71494a77434e99d28ca739040ba6",
+            "_jac_archetype": "archetype",
+            "kind": "hit",
+            "lane_id": "D",
+            "sentence": "Commit email resolved from search/commits in one global call.",
+            "seq": 5,
+            "t": 1785108590.706918
+          }
+        ],
+        "run": {
+          "_jac_type": "RunStateView",
+          "_jac_id": "006bb2861b4340e288e859d166fcd2a3",
+          "_jac_archetype": "archetype",
+          "converged_count": 1,
+          "dropped_count": 1,
+          "exists": true,
+          "finished_at": 0.0,
+          "jid": "d5c870b3b6094f76a09a92f960e6f592",
+          "lane_count": 4,
+          "prospect_count": 3,
+          "reasoning_count": 6,
+          "started_at": 1785108590.042333,
+          "status": "running",
+          "surviving_count": 2
+        },
+        "seq": 0
+      },
+      "reports": []
+    },
+    "error": null,
+    "meta": {
+      "extra": {
+        "http_status": 200
+      }
+    }
+  }
+}
