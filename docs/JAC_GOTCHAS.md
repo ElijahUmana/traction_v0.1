@@ -206,6 +206,31 @@ the graph rather than that a local variable still holds what you just put in it.
 3. Never name a file `test_*.jac` — collides with Python's test-module machinery.
 4. All checks are plain `assert`, with an optional message.
 5. Tests run in parallel across workers; don't assume ordering.
+6. **`test` takes a QUOTED STRING, not an identifier.** `test my_name { }` fails
+   with `E0001: Expected '{', got 'NAME'`. Write `test "my name" { }`.
+7. **Run the suite with `PYTEST_XDIST_AUTO_NUM_WORKERS=1` or walker tests flake.**
+   `jac test` shells out to pytest-xdist with ten workers. Any test that spawns a
+   walker on `root` will *intermittently* fail with:
+   ```
+   WriteConflict: anchor 00000000-0000-0000-0000-000000000000
+                  changed concurrently (expected v0, found v1)
+   ```
+   Ten workers mutating the one root anchor. Measured on the identity suite:
+   **29 passed / 1 failed at ten workers, 30 passed / 0 failed at one** — same
+   code, same commit. It is not a logic bug and it moves around between runs,
+   so it reads as a flaky test at exactly the wrong moment.
+
+   There is no CLI flag, and `PYTEST_ADDOPTS="-p no:xdist"` does **not** work —
+   jac injects `-n` unconditionally and pytest then rejects the run with
+   `unrecognized arguments: -n`. The env var is the only lever:
+   ```bash
+   PYTEST_XDIST_AUTO_NUM_WORKERS=1 jac test
+   ```
+8. **A network-dependent assertion belongs behind a capability guard**, not in a
+   mock. `if gh.has_token() { ... }` keeps the suite green on a machine with no
+   credentials while still exercising the real path on one that has them.
+   Mocking the thing under test here would have hidden a live cross-link bug
+   that only a real API response exposed.
 
 ---
 
