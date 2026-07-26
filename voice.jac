@@ -50,6 +50,16 @@ glob llm: Model = Model(model_name=cfg("BYLLM_MODEL", "claude-sonnet-4-6"));
 glob KB_CACHE: dict[str, str] = {};
 
 
+"""First name only - the opening line is spoken aloud, and a full legal name reads as a robocall."""
+def first_name(full: str) -> str {
+    parts = full.strip().split();
+    if parts {
+        return parts[0];
+    }
+    return full;
+}
+
+
 """Flatten everything the graph knows about one human into speakable prose.
 
 Written for a text-to-speech engine, so no markup, no bullet characters and no
@@ -268,6 +278,7 @@ window rather than whenever Vapi's scheduler next wakes up.
 async walker:pub ScheduleCall(ProspectLookup) {
     has phone_number: str = "";
     has delay_seconds: int = 5;
+    has dry_run: bool = False;
     has reports: list[dict] = [];
 
     async can place with Prospect entry {
@@ -317,7 +328,7 @@ async walker:pub ScheduleCall(ProspectLookup) {
                     "dossier": dossier
                 },
                 "firstMessage": (
-                    f"Hi {here.name}, this is an AI assistant calling on behalf of "
+                    f"Hi {first_name(here.name)}, this is an AI assistant calling on behalf of "
                     + f"{founder['name']}. You replied to our email a moment ago - is now "
                     + "still a good time?"
                 ),
@@ -326,6 +337,30 @@ async walker:pub ScheduleCall(ProspectLookup) {
                 "serverMessages": ["end-of-call-report"]
             }
         };
+
+        if self.dry_run {
+            # Everything above is real - ids resolved from the live Vapi account,
+            # dossier built from the graph, tool URLs resolved from the tunnel -
+            # but no phone rings. Lets the payload be inspected during rehearsal.
+            report {
+                "ok": True,
+                "dry_run": True,
+                "prospect": here.name,
+                "prospect_id": jid(here),
+                "would_call": number,
+                "phone_number_id": phone_id,
+                "assistant_id": assistant_id,
+                "earliest_at": earliest,
+                "dossier_chars": len(dossier),
+                "tool_urls": [
+                    public_url_for("/walker/KbQuery"),
+                    public_url_for("/walker/BookInterview")
+                ],
+                "server_url": public_url_for("/walker/OnCallEnd"),
+                "payload": payload
+            };
+            disengage;
+        }
 
         created = await http_json(
             "POST", f"{vapi_base()}/call", vapi_headers(), payload, 30.0, "vapi-create-call"
@@ -358,6 +393,32 @@ async walker:pub ScheduleCall(ProspectLookup) {
         };
         disengage;
     }
+}
+
+
+"""Locate a CallSession by its Vapi call id.
+
+Checks both the production shape (hung off a Prospect by the Called edge) and a
+session attached straight to root, so a rehearsal or a partially-built graph
+still resolves rather than silently answering "no research on file".
+"""
+def find_call_session(vapi_call_id: str) -> CallSession | None {
+    if not vapi_call_id {
+        return None;
+    }
+    for prospect in [root --> [?:Prospect]] {
+        for session in [prospect --> [?:CallSession]] {
+            if session.vapi_call_id == vapi_call_id {
+                return session;
+            }
+        }
+    }
+    for session in [root --> [?:CallSession]] {
+        if session.vapi_call_id == vapi_call_id {
+            return session;
+        }
+    }
+    return None;
 }
 
 
@@ -412,11 +473,10 @@ walker:pub KbQuery {
         # Hot path: the dossier was flattened at schedule time.
         blob = KB_CACHE.get(vapi_call, "");
         if not blob {
-            for session in [root --> [?:Prospect] --> [?:CallSession]] {
-                if session.vapi_call_id == vapi_call {
-                    blob = session.kb_blob;
-                    KB_CACHE[vapi_call] = blob;
-                }
+            found = find_call_session(vapi_call);
+            if found is not None {
+                blob = found.kb_blob;
+                KB_CACHE[vapi_call] = blob;
             }
         }
         if not blob {
@@ -484,11 +544,11 @@ async walker:pub BookInterview {
             }
         }
         if (target is None) and vapi_call {
-            for prospect in [root --> [?:Prospect]] {
-                for session in [prospect --> [?:CallSession]] {
-                    if session.vapi_call_id == vapi_call {
-                        target = prospect;
-                    }
+            session = find_call_session(vapi_call);
+            if session is not None {
+                owner = [session <-- [?:Prospect]];
+                if owner {
+                    target = owner[0];
                 }
             }
         }
@@ -600,14 +660,16 @@ walker:pub OnCallEnd {
             raise ValueError("OnCallEnd: no call id present in the payload");
         }
 
-        for prospect in [root --> [?:Prospect]] {
-            for session in [prospect --> [?:CallSession]] {
-                if session.vapi_call_id == vapi_call {
-                    visit [session];
-                }
-            }
-        }
         self.transcript = text;
+        found = find_call_session(vapi_call);
+        if found is None {
+            raise ValueError(
+                f"OnCallEnd: no CallSession on the graph for vapi_call_id '{vapi_call}' - "
+                + "the call was never scheduled through ScheduleCall, so there is nothing "
+                + "to attach the transcript to"
+            );
+        }
+        visit [found];
     }
 
     can record with CallSession entry {
