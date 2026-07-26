@@ -22,7 +22,10 @@ import from contracts {
     LaneId, LaneState, ReasoningKind, EvidenceKind, EvidenceSource,
     EmailSource, CompletenessTier
 }
-import from schema { Lane, Prospect, Evidence, Founder, Reasoning }
+import from schema {
+    Lane, Prospect, Evidence, Founder, Reasoning,
+    Surfaced, HasWarmLead, HasEvidence, Emitted, HasLane, Runs
+}
 import from research { LaneBrowser }
 
 glob LANE_W_DOCTRINE: str =
@@ -31,37 +34,70 @@ glob LANE_W_DOCTRINE: str =
 
 # Profile facts in one round trip. Every field has fallbacks because LinkedIn
 # rotates class names constantly; structure and aria labels outlive them.
+# Profile facts in one round trip.
+#
+# NOT class selectors. Probed live 2026-07-26: LinkedIn now serves profile pages
+# with ZERO <h1>, no <main>, and no .pv-top-card — every structural selector the
+# obvious implementation reaches for returns nothing, while document.title and
+# the rendered text carry the facts perfectly. Title and text order are what
+# survive their redesigns; class names are what churn.
 glob PROFILE_JS: str = """
 (function(){
-  const pick = sels => {
-    for (const s of sels) {
-      const el = document.querySelector(s);
-      const t = el && (el.innerText || '').trim();
-      if (t) return t.split('\\n')[0].trim();
-    }
-    return '';
-  };
-  const exp = [];
-  document.querySelectorAll('#experience ~ div li, section:has(#experience) li').forEach(li => {
-    const t = (li.innerText || '').trim();
-    if (t && exp.length < 6) exp.push(t.split('\\n').slice(0, 3).join(' | '));
-  });
-  let about = '';
-  const aboutSec = document.querySelector('#about');
-  if (aboutSec) {
-    const host = aboutSec.closest('section') || aboutSec.parentElement;
-    if (host) about = (host.innerText || '').replace(/^About\\s*/i, '').trim();
+  const lines = (document.body.innerText || '').split('\\n')
+                  .map(s => s.trim()).filter(Boolean);
+  const title = document.title || '';
+  let name = title.split('|')[0].trim();
+  if (!name || /linkedin/i.test(name)) {
+    const h1 = document.querySelector('h1');
+    name = h1 ? (h1.innerText || '').trim() : '';
   }
-  return {
-    name: pick(['h1']),
-    headline: pick(['div.text-body-medium.break-words', '.pv-text-details__left-panel .text-body-medium']),
-    location: pick(['span.text-body-small.inline.t-black--light.break-words']),
-    company: pick(['button[aria-label^="Current company"]', '.pv-text-details__right-panel-item-text']),
-    about: about.slice(0, 1200),
-    experience: exp,
-    url: location.href.split('?')[0],
-    title: document.title
+
+  // The headline is the first substantive line after the name, skipping the
+  // chrome LinkedIn interleaves (follower counts, action buttons).
+  const noise = /^(Contact info|More|Message|Follow|Following|Connect|Open to|Add profile section|Enhance profile|\\d+(,\\d+)* (followers|connections)|\\d+(st|nd|rd|th) degree connection)$/i;
+  let headline = '';
+  const at = lines.indexOf(name);
+  if (at >= 0) {
+    for (let j = at + 1; j < Math.min(at + 6, lines.length); j++) {
+      const c = lines[j];
+      if (c && c !== name && c.length > 3 && !noise.test(c)) { headline = c; break; }
+    }
+  }
+
+  const STOPS = ['About','Experience','Education','Activity','Skills','Interests',
+                 'Licenses & certifications','Projects','Honors & awards',
+                 'Recommendations','People you may know','Volunteering'];
+  const section = (label) => {
+    const start = lines.indexOf(label);
+    if (start < 0) return '';
+    const out = [];
+    for (let j = start + 1; j < lines.length; j++) {
+      if (STOPS.indexOf(lines[j]) >= 0) break;
+      out.push(lines[j]);
+      if (out.join(' ').length > 1400) break;
+    }
+    return out.join(' ').trim();
   };
+
+  const about = section('About');
+  const expLines = [];
+  const eStart = lines.indexOf('Experience');
+  if (eStart >= 0) {
+    for (let j = eStart + 1; j < lines.length && expLines.length < 6; j++) {
+      if (STOPS.indexOf(lines[j]) >= 0) break;
+      if (lines[j].length > 2) expLines.push(lines[j]);
+    }
+  }
+
+  // "SWE Intern @ Uber | CS + AI @ Minerva" -> Uber
+  let company = '';
+  const m = headline.match(/@\\s*([A-Za-z0-9.&'\\- ]{2,40})/);
+  if (m) company = m[1].trim().replace(/\\s*\\|.*$/, '').trim();
+
+  return {name: name, headline: headline, about: about.slice(0, 1200),
+          company: company, experience: expLines,
+          url: location.href.split('?')[0], title: title,
+          line_count: lines.length};
 })()
 """;
 
@@ -69,19 +105,34 @@ glob PROFILE_JS: str = """
 glob ACTIVITY_JS: str = """
 (function(){
   const out = [];
-  document.querySelectorAll('div.feed-shared-update-v2, li.profile-creator-shared-feed-update__container, div.occludable-update').forEach(card => {
-    const txt = (card.innerText || '').trim();
-    if (!txt) return;
-    const body = txt.split('\\n').filter(l => l.trim().length > 40)[0] || '';
-    if (body && out.length < 8) {
-      out.push({text: body.trim().slice(0, 400),
-                meta: (txt.match(/\\b(\\d+[dwmoh]|\\d+ (day|week|month|hour)s? ago)\\b/) || [''])[0]});
+  const push = (t, meta) => {
+    const body = (t || '').trim();
+    if (body.length > 40 && out.length < 8
+        && !out.some(o => o.text.slice(0, 60) === body.slice(0, 60))) {
+      out.push({text: body.slice(0, 400), meta: meta || ''});
     }
+  };
+  const cards = document.querySelectorAll(
+    'div.feed-shared-update-v2, li.profile-creator-shared-feed-update__container, div.occludable-update');
+  cards.forEach(card => {
+    const txt = (card.innerText || '').trim();
+    const body = txt.split('\\n').filter(l => l.trim().length > 40)[0] || '';
+    push(body, (txt.match(/\\b(\\d+[dwmoh]|\\d+ (day|week|month|hour)s? ago)\\b/) || [''])[0]);
   });
+  if (!out.length) {
+    // Class names have churned again. Fall back to the rendered text: any long
+    // line on an activity page is a post body.
+    const lines = (document.body.innerText || '').split('\\n').map(s => s.trim());
+    for (let i = 0; i < lines.length; i++) {
+      if (lines[i].length > 80) {
+        const near = lines.slice(Math.max(0, i - 3), i + 1).join(' ');
+        push(lines[i], (near.match(/\\b(\\d+[dwmoh]|\\d+ (day|week|month|hour)s? ago)\\b/) || [''])[0]);
+      }
+    }
+  }
   return {items: out, count: out.length, url: location.href.split('?')[0]};
 })()
 """;
-
 
 """Turn LinkedIn's relative stamps ("3d", "2 weeks ago") into days, or -1."""
 def age_in_days(meta: str) -> int;
@@ -173,11 +224,11 @@ walker LaneW {
         }
 
         here.state = LaneState.READING;
-        profile = self.browser.eval_json(PROFILE_JS) or {};
-        name = profile.get("name") or self.warm_name;
-        headline = profile.get("headline", "");
-        about = profile.get("about", "");
-        company = profile.get("company", "");
+        profile: dict = self.browser.eval_json(PROFILE_JS) or {};
+        name: str = str(profile.get("name") or self.warm_name or "");
+        headline: str = str(profile.get("headline") or "");
+        about: str = str(profile.get("about") or "");
+        company: str = str(profile.get("company") or "");
 
         if not name {
             here.state = LaneState.FAILED;
@@ -209,7 +260,7 @@ walker LaneW {
             handle=handle,
             headline=headline,
             company=company,
-            linkedin_url=profile.get("url") or self.warm_url,
+            linkedin_url=str(profile.get("url") or self.warm_url),
             email=self.warm_email,
             # Known at intake. This is the one prospect that never needs the
             # email waterfall, so it can never fail the gate.
@@ -253,8 +304,8 @@ walker LaneW {
         );
 
         if self.browser.goto(activity_url) {
-            activity = self.browser.eval_json(ACTIVITY_JS) or {};
-            items: list = activity.get("items", []) or [];
+            activity: dict = self.browser.eval_json(ACTIVITY_JS) or {};
+            items: list = activity.get("items") or [];
             if items {
                 self.narrate(
                     here,
@@ -263,11 +314,11 @@ walker LaneW {
                     ReasoningKind.OBSERVE
                 );
                 for item in items[:5] {
-                    quote = item.get("text", "");
+                    quote: str = str(item.get("text") or "");
                     if quote {
                         self.attach_evidence(
                             p, quote, EvidenceKind.POST, activity_url,
-                            age_in_days(item.get("meta", ""))
+                            age_in_days(str(item.get("meta") or ""))
                         );
                     }
                 }
