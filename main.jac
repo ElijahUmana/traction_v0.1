@@ -31,17 +31,19 @@ import from contracts {
 }
 
 import from schema {
-    Founder, ICP, ResearchRun, Lane, Reasoning,
+    Founder, ICP, ResearchRun, Lane, Reasoning, SearchProbe,
     Prospect, Evidence,
     IdentityProfile, GithubProfile, LinkedinProfile,
     EmailThread, ReplyEvent, CallSession, Insight, Booking,
     Targets, HasWarmLead, Runs, HasLane, Emitted, Surfaced,
+    Probe, Widened,
     HasEvidence, Identity, Outreach, GotReply, Called, Learned, Booked
 }
 
 # --- teammate endpoint modules are imported here as they land ---------------
-# import from research { RunResearch, LinkedInLane, GithubLane, PlanCampaign }
-# import from identity { CrossLinkToGithub, CrossLinkToLinkedIn, ResolveEmail, RankAndSelect }
+# import from research { RunResearch, LinkedInLane, PlanCampaign }
+import from githublane { GithubLane }
+import from identity { CrossLinkToGithub, CrossLinkToLinkedIn, ResolveEmail, RankAndSelect }
 import from outreach { ComposeOutreach, SendOutreach, OnEmailReply }
 import from voice    { ScheduleCall, KbQuery, BookInterview, OnCallEnd }
 import from rehearsal { SeedRehearsalProspect }
@@ -56,21 +58,40 @@ import from feed {
 }
 
 
-# Node counts by archetype - the fastest way to prove the graph survived a restart.
+# Node counts across the whole reachable graph - the fastest way to prove the
+# graph survived a restart, and the fastest way to see a split root.
+# NOTE: runs hang off Founder and lanes off ResearchRun, so this must TRAVERSE.
+# Counting only `[root --> [?:X]]` silently reports 0 runs and 0 lanes while
+# get_run_state happily reports a live run with four lanes.
 def:pub graph_health -> dict[str, int] {
-    prospects = [root --> [?:Prospect]];
+    founders = [root --> [?:Founder]];
+    runs = [founders ->:Runs:->];
+    lanes = [runs ->:HasLane:->];
+
+    seen: list[str] = [];
     converged: int = 0;
-    for p in prospects {
-        if p.is_converged() {
-            converged += 1;
+    dropped: int = 0;
+    for p in [root --> [?:Prospect]] + [founders ->:HasWarmLead:->] + [lanes ->:Surfaced:->] {
+        key = jid(p);
+        if key not in seen {
+            seen.append(key);
+            if p.is_converged() {
+                converged += 1;
+            }
+            if p.tier == CompletenessTier.DROPPED {
+                dropped += 1;
+            }
         }
     }
     return {
-        "founders": len([root --> [?:Founder]]),
-        "runs": len([root --> [?:ResearchRun]]),
-        "lanes": len([root --> [?:Lane]]),
-        "prospects": len(prospects),
-        "converged_prospects": converged
+        "founders": len(founders),
+        "runs": len(runs),
+        "lanes": len(lanes),
+        "probes": len([lanes ->:Probe:->]),
+        "reasoning": len([lanes ->:Emitted:->]),
+        "prospects": len(seen),
+        "converged_prospects": converged,
+        "dropped_prospects": dropped
     };
 }
 
@@ -81,6 +102,9 @@ with entry:__main__ {
     print("  founders           :", stats["founders"]);
     print("  research runs      :", stats["runs"]);
     print("  lanes              :", stats["lanes"]);
+    print("  probes             :", stats["probes"]);
+    print("  reasoning lines    :", stats["reasoning"]);
     print("  prospects          :", stats["prospects"]);
     print("  converged prospects:", stats["converged_prospects"]);
+    print("  dropped prospects  :", stats["dropped_prospects"]);
 }
