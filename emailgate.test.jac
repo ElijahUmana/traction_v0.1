@@ -168,3 +168,91 @@ test "never fabricates" {
         assert v.email == "";
     }
 }
+
+
+test "the exact node that shipped: one person's quotes, another person's email" {
+    # Reproduces the Lane W proof artifact that was recorded as a pass. Every
+    # field is individually valid; only the COMBINATION is wrong.
+    v = check_identity(
+        "xingzhizhu6@gmail.com",                                  # the warm lead
+        "provided",
+        "https://www.linkedin.com/in/elijah-umana-4964b3206/",    # a stand-in
+        [
+            "https://www.linkedin.com/in/elijah-umana-4964b3206/",
+            "https://www.linkedin.com/in/elijah-umana-4964b3206/recent-activity/all/"
+        ]
+    );
+    # The stand-in IS internally consistent - profile and evidence agree - so
+    # the URL check alone passes. What must not pass is composing an email to
+    # the warm lead from it, and that is caught downstream by the address never
+    # having been tied to this identity. Assert the handles were read correctly.
+    assert linkedin_handle("https://www.linkedin.com/in/elijah-umana-4964b3206/")
+           == "elijah-umana-4964b3206";
+}
+
+test "evidence scraped from a different profile than the one claimed is refused" {
+    v = check_identity(
+        "xingzhizhu6@gmail.com", "provided",
+        "https://www.linkedin.com/in/xingzhi-zhu/",
+        [
+            "https://www.linkedin.com/in/xingzhi-zhu/",
+            "https://www.linkedin.com/in/elijah-umana-4964b3206/recent-activity/all/"
+        ]
+    );
+    assert not v.ok;
+    assert len(v.reasons) >= 1;
+    assert "more than one person" in " ".join(v.reasons);
+}
+
+test "a provided email with no profile to attribute it to is refused" {
+    v = check_identity("xingzhizhu6@gmail.com", "provided", "", []);
+    assert not v.ok;
+    assert "no identity to attribute" in " ".join(v.reasons);
+}
+
+test "a provided email whose quotes carry no profile url is refused" {
+    v = check_identity(
+        "xingzhizhu6@gmail.com", "provided",
+        "https://www.linkedin.com/in/xingzhi-zhu/",
+        ["https://example.com/blog/post"]
+    );
+    assert not v.ok;
+    assert "cannot be tied to that identity" in " ".join(v.reasons);
+}
+
+test "the real warm lead passes cleanly" {
+    v = check_identity(
+        "xingzhizhu6@gmail.com", "provided",
+        "https://www.linkedin.com/in/xingzhi-zhu/",
+        [
+            "https://www.linkedin.com/in/xingzhi-zhu/",
+            "https://www.linkedin.com/in/xingzhi-zhu/recent-activity/all/"
+        ]
+    );
+    assert v.ok;
+    assert v.reasons == [];
+}
+
+test "a resolved email is still checked for two-humans-on-one-node" {
+    # Not just PROVIDED: mixed evidence is wrong for every source.
+    v = check_identity(
+        "someone@example.com", "github:commits",
+        "https://www.linkedin.com/in/xingzhi-zhu/",
+        ["https://www.linkedin.com/in/somebody-else/"]
+    );
+    assert not v.ok;
+}
+
+test "linkedin_handle survives query strings, fragments and trailing slashes" {
+    assert linkedin_handle("https://www.linkedin.com/in/xingzhi-zhu/") == "xingzhi-zhu";
+    assert linkedin_handle("https://www.linkedin.com/in/xingzhi-zhu?skipRedirect=true")
+           == "xingzhi-zhu";
+    assert linkedin_handle("https://www.linkedin.com/in/Xingzhi-Zhu/#about") == "xingzhi-zhu";
+    # Sub-pages of a profile are the same human, not a stranger.
+    assert linkedin_handle("https://www.linkedin.com/in/xingzhi-zhu/recent-activity/all/")
+           == "xingzhi-zhu";
+    assert linkedin_handle("https://www.linkedin.com/in/xingzhi-zhu/overlay/contact-info/")
+           == "xingzhi-zhu";
+    assert linkedin_handle("https://github.com/someone") == "";
+    assert linkedin_handle("") == "";
+}

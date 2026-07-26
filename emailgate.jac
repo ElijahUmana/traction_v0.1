@@ -378,3 +378,93 @@ def best_of(emails: list[str], login: str, name: str) -> str {
     }
     return best;
 }
+
+
+# ---------------------------------------------------------------------------
+# IDENTITY INTEGRITY
+#
+# The waterfall above asks "does this address plausibly belong to this human?"
+# An address that arrives at intake (EmailSource.PROVIDED) never goes through
+# it - it is trusted by construction, confidence 1.0, no attribution score.
+#
+# That trust is only sound if the IDENTITY the evidence was scraped from is the
+# same identity the address belongs to. Those are two independent facts and
+# nothing was checking that they agreed. A stand-in profile and a real address
+# on one Prospect node produces an email that quotes one person's words at
+# another - not fabricated evidence, but real evidence about the wrong human.
+# It reads perfectly in every log, and the recipient is the only one who can
+# tell. That is strictly worse than sending nothing.
+#
+# This was not hypothetical: a Lane W proof run against a stand-in profile
+# wrote one node carrying a stand-in's name, headline and seven quotes, with
+# the real warm lead's address and PROVIDED source. It was recorded as a pass.
+# ---------------------------------------------------------------------------
+
+"""The /in/<handle> segment of a LinkedIn URL, lowercased. '' if absent."""
+def linkedin_handle(url: str) -> str {
+    if not url or "/in/" not in url {
+        return "";
+    }
+    tail = url.split("/in/", 1)[1];
+    # Only the FIRST path segment is the handle. Sub-pages under a profile --
+    # /recent-activity/all/, /overlay/contact-info/ -- belong to the same human,
+    # and treating them as distinct handles would flag a profile as a stranger
+    # to its own activity feed.
+    return tail.split("?")[0].split("#")[0].strip("/").split("/")[0].lower();
+}
+
+
+obj IdentityCheck {
+    has ok: bool = True;
+    has reasons: list[str] = [];
+}
+
+
+"""Refuse to email a human whose evidence was scraped from a different human.
+
+`profile_url` is the profile the Prospect claims to be. `evidence_urls` are the
+pages each quote was actually read from. If those disagree, the node holds two
+people and no email may be composed from it.
+"""
+def check_identity(
+    email: str, email_source: str, profile_url: str, evidence_urls: list[str]
+) -> IdentityCheck {
+    reasons: list[str] = [];
+    claimed = linkedin_handle(profile_url);
+    provided = email_source == "provided";
+
+    if provided and not email {
+        reasons.append("email_source is PROVIDED but no address is set");
+    }
+    if provided and not claimed {
+        # Nothing to attribute the trusted address to.
+        reasons.append(
+            "email_source is PROVIDED but the prospect carries no LinkedIn URL, "
+            + "so there is no identity to attribute the address to"
+        );
+    }
+
+    # Evidence read from a different profile than the one claimed is wrong for
+    # every source, not just PROVIDED - it means two humans on one node.
+    seen: list[str] = [];
+    for url in evidence_urls {
+        h = linkedin_handle(str(url));
+        if h and h not in seen {
+            seen.append(h);
+        }
+    }
+    strangers = [h for h in seen if claimed and h != claimed];
+    if strangers {
+        reasons.append(
+            f"evidence was scraped from {', '.join(strangers)} but the prospect "
+            + f"claims to be {claimed} - this node holds more than one person"
+        );
+    }
+    if claimed and (not seen) and provided {
+        reasons.append(
+            f"email is PROVIDED for {claimed} but no evidence carries a profile "
+            + "URL, so the quotes cannot be tied to that identity"
+        );
+    }
+    return IdentityCheck(ok=(len(reasons) == 0), reasons=reasons);
+}
