@@ -105,28 +105,51 @@ glob PROFILE_JS: str = """
 glob ACTIVITY_JS: str = """
 (function(){
   const out = [];
+  // LinkedIn's activity page interleaves post bodies with UI furniture. Quoting
+  // "2 months ago - Edited - Visible to anyone" back at a prospect is worse than
+  // quoting nothing, so chrome is rejected explicitly, not length-filtered.
+  const CHROME = [
+    /^\\d+\\s*(mo|month|week|day|hour|minute|w|d|h|m)s?\\s*(ago)?\\b/i,
+    /visible to anyone/i, /^(edited|promoted|sponsored)$/i,
+    /^(like|comment|repost|send|follow|following|connect)$/i,
+    /^\\d+(,\\d+)*\\s*(followers|connections|reactions|comments|impressions)/i,
+    /feed post number/i, /^activity$/i, /^see all/i, /loaded \\d+ /i,
+    /^(new|show more|show all)/i
+  ];
+  const isChrome = t => CHROME.some(re => re.test(t));
+  // A real post body reads like prose: enough words, not mostly separators.
+  const isProse = t => {
+    const words = t.split(/\\s+/).filter(Boolean);
+    if (words.length < 12) return false;
+    return (t.match(/\\u2022/g) || []).length <= 2;
+  };
+  const seen = new Set();
   const push = (t, meta) => {
     const body = (t || '').trim();
-    if (body.length > 40 && out.length < 8
-        && !out.some(o => o.text.slice(0, 60) === body.slice(0, 60))) {
-      out.push({text: body.slice(0, 400), meta: meta || ''});
-    }
+    if (!body || body.length < 60 || isChrome(body) || !isProse(body)) return;
+    const key = body.slice(0, 60);
+    if (seen.has(key) || out.length >= 8) return;
+    seen.add(key);
+    out.push({text: body.slice(0, 400), meta: meta || ''});
   };
-  const cards = document.querySelectorAll(
-    'div.feed-shared-update-v2, li.profile-creator-shared-feed-update__container, div.occludable-update');
-  cards.forEach(card => {
+  const stamp = t => (t.match(/\\b(\\d+\\s*(mo|[dwhm])\\b|\\d+ (day|week|month|hour)s? ago)/i) || [''])[0];
+
+  document.querySelectorAll(
+    'div.feed-shared-update-v2, li.profile-creator-shared-feed-update__container, div.occludable-update'
+  ).forEach(card => {
     const txt = (card.innerText || '').trim();
-    const body = txt.split('\\n').filter(l => l.trim().length > 40)[0] || '';
-    push(body, (txt.match(/\\b(\\d+[dwmoh]|\\d+ (day|week|month|hour)s? ago)\\b/) || [''])[0]);
+    const body = txt.split('\\n').map(l => l.trim())
+                    .filter(l => l.length > 60 && !isChrome(l) && isProse(l))[0] || '';
+    push(body, stamp(txt));
   });
+
   if (!out.length) {
-    // Class names have churned again. Fall back to the rendered text: any long
-    // line on an activity page is a post body.
+    // Card classes have churned again. Fall back to rendered text, with the same
+    // chrome and prose gates so the fallback cannot lower the quality bar.
     const lines = (document.body.innerText || '').split('\\n').map(s => s.trim());
     for (let i = 0; i < lines.length; i++) {
-      if (lines[i].length > 80) {
-        const near = lines.slice(Math.max(0, i - 3), i + 1).join(' ');
-        push(lines[i], (near.match(/\\b(\\d+[dwmoh]|\\d+ (day|week|month|hour)s? ago)\\b/) || [''])[0]);
+      if (lines[i].length > 60) {
+        push(lines[i], stamp(lines.slice(Math.max(0, i - 4), i + 1).join(' ')));
       }
     }
   }
