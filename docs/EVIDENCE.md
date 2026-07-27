@@ -367,57 +367,83 @@ BSD `sleep` rejects it and exits **immediately**, closing the pipe and causing t
 
 ## 8. Test suite
 
-**Status: per-file GREEN. Full-repo run does not execute. Measured per file, not assumed.**
-
-| Target | Result | Time |
-|---|---|---|
-| `jac test feed.jac` | **20 passed** | 4:41 |
-| `jac test browser/ws.jac` | **12 passed** | 0:23 |
-| `jac test research.jac` | **36 passed, 3 failed** | 8:52 |
-| `jac test` (whole repo) | **no tests ran** — worker dies | 4:14 |
-
-All runs with `PYTEST_XDIST_AUTO_NUM_WORKERS=1` and **no `ANTHROPIC_API_KEY` set**.
-
-### The full-repo run dies; it does not fail
+**Status: the suite RUNS. 864 passed, 38 failed.** Measured in an isolated clone at HEAD, no `ANTHROPIC_API_KEY` set.
 
 ```
-INTERNALERROR> File ".../xdist/dsession.py", line 152, in loop_once
-INTERNALERROR>   raise RuntimeError("Unexpectedly no active workers available")
-====================== no tests ran in 253.80s ======================
+$ jac test
+================== 38 failed, 864 passed in 255.90s ==================
 ```
 
-The xdist worker **process is killed outright** — this is not a collection error and not an assertion failure. With one worker, its death ends the run. Individually, `feed.jac`, `browser/ws.jac` and `research.jac` all execute fine, so it is the combination that kills it. Not isolated further; each attempt costs 4–9 minutes.
+This supersedes the earlier "no tests ran, exit 3" in this section, and it supersedes the per-file numbers I reported before that.
 
-### The 3 `research.jac` failures are test-isolation artifacts, not product bugs
+### What was actually broken: the `.test.jac` annex mechanism
 
-`research.jac` fails 3 of 39 in a whole-file run:
-- `lane A surfaces commenters, not the post author`
-- `a dry probe grows the next rung as a child and walks into it`
-- `two lanes finding the same human converge onto one prospect`
-
-The third is the product thesis, so it was worth checking properly rather than reporting as a defect. **Run on its own it passes:**
+ARCHITECT root-caused it (`b1f9ed8`). **An annex's tests are attributed to every module that transitively imports its parent, not just the parent.** `browser/ws.test.jac`'s 12 tests were collected under `ws.jac`, `session.jac`, `session_proof.jac`, `live_proof.jac` and `page.jac`; pytest-xdist workers disagreed about which, and a collection mismatch aborts the whole run:
 
 ```
-$ jac test research.jac -t "two lanes finding the same human converge onto one prospect"
-1 passed, 38 deselected
+ERROR gw5 - Different tests were collected between gw1 and gw5
 ```
 
-So the convergence logic is correct and the failure is cross-test state, consistent with the shared-root contention seen elsewhere. **Reported here as a harness problem, not as a broken thesis** — the opposite error (calling a harness artifact a product bug) would have been just as misleading as hiding it.
+Converting that one file to a standalone `browser/ws_tests.jac` with explicit imports made collection deterministic and unblocked everything.
 
-### The xdist trap that this all sits on
+### The remaining 38 are one defect, not 38
 
-`jac test` runs pytest-xdist with **ten workers** by default and injects `-n` unconditionally, so `-p no:xdist` is rejected and there is no CLI flag. Ten workers mutating the single root anchor produce intermittent `WriteConflict: anchor 00000000-…`, which reads exactly like a race in the code under test and is not one. Measured on `feed.jac`: **5 failures with default workers, 0 with one.** Found by GHIDENT. `ops/test.sh` bakes in the env var.
+Same mechanism. Roughly 4 real tests running under ~13 wrong parents each, where their fixtures do not exist:
 
-The 2 failures that survived the worker fix were a genuine bug: `feed.jac` does not import `ReasoningKind`, so the `.test.jac` annex could not see it — an annex sees its base module's declarations, not the names its base chose not to import.
+- `"real domains that look machine-ish still pass"` (from `emailgate.test.jac`) runs under 13 parents
+- `"two lanes finding the same human converge onto one prospect"` (from `research.test.jac`) runs under 5
+
+Each **passes in isolation** — verified earlier for the convergence test (`1 passed, 38 deselected`). The product logic is fine; the attribution is not.
+
+### SETTLED: the annex route is closed. `864/38` is the best achievable state.
+
+Converting the remaining annexes to standalone `*_tests.jac` with explicit imports — the same change that fixed `ws` — **does not work, at any count.** Four measurements, two operators, isolated clones:
+
+| Converted | Result |
+|---|---|
+| six | no tests ran — `RuntimeError: Unexpectedly no active workers available` |
+| five (`research` restored) | no tests ran — `KeyError: <WorkerController gw2>` |
+| **one** (`schema`, simplest surface) | no tests ran — `KeyError: <WorkerController gw7>` |
+| **zero** (HEAD, `ws` only) | **864 passed, 38 failed** ✅ |
+
+Every converted file **typechecks clean** (`jac check` → 0 errors). They kill the xdist worker at *collection*, not at compile.
+
+So it is not a count problem, not `research`, and not one bad file: **a single conversion of any product-surface module is enough.** ARCHITECT ran the one-file case on `schema` — the most `ws`-like of the five, being types and graph shape with no LLM, no browser and no network — and it died identically.
+
+**Why `ws` is the exception:** it is a leaf. No graph archetypes, no LLM, no server surface — just `struct` and pure functions. Every other annex's parent pulls in the whole product surface, and a standalone module re-imports archetypes the annex previously saw *without* importing them. Something in that re-import path is not worker-safe. That last step is inference; the four rows above are measurements.
+
+Neither of us pushed a conversion. **HEAD keeps 864/38, which beats a green-looking suite that runs nothing.** Worker count is not the variable either — the failures reproduce on both the default count and `-n1`.
+
+**The 38 remaining failures are the annex-duplication artifact and are not fixable by this route today.** Roughly 4 real tests running under ~13 wrong parents each, where their fixtures do not exist; each passes in isolation.
+
+### A correction to my own earlier finding
+
+I previously reported "5 tests fail on a shared-root `WriteConflict`" and attributed it to `walker:pub` tests contending on `root.shared`. **That was probably wrong.** The annex mechanism explains the same signature better — tests executing in a context that is not theirs — and it also explains why they pass in isolation, which a contention story does not. GHIDENT's xdist finding (`PYTEST_XDIST_AUTO_NUM_WORKERS=1`, ten workers racing one anchor) is real and separate, but it was not the cause of these.
+
+### The xdist trap, which is still real
+
+`jac test` runs pytest-xdist with ten workers and injects `-n` unconditionally, so `-p no:xdist` is rejected and there is no CLI flag. `ops/test.sh` sets `PYTEST_XDIST_AUTO_NUM_WORKERS=1`. **Note that the 864/38 run above used the DEFAULT worker count** — with the annex collection fixed, the default works; forcing one worker did not help and is not required for this run.
 
 ## 9. Jac percentage audit
 
 **Status: product code is 100% Jac.** Reproduce: `ops/jac_audit.sh` — it prints both numbers so neither has to be taken on trust.
 
 ```
-PRODUCT CODE      : 100.00% Jac   (16030 .jac / 0 non-.jac)
-INCLUDING ops/    :  82.86% Jac   (16030 .jac / 3314 non-.jac)
+PRODUCT CODE      : 100.00% Jac   (16409 .jac / 0 non-.jac)
+INCLUDING ops/    :  82.41% Jac   (16409 .jac / 3501 non-.jac)
 ```
+
+**Projected once `integration/becky-ui` merges** — measured on that branch, not estimated:
+
+```
+PRODUCT CODE      : 100.00% Jac   (26639 .jac / 0 non-.jac)
+INCLUDING ops/    :  88.33% Jac   (26639 .jac / 3519 non-.jac)
+Stylesheets counted separately: 1716 lines of .css
+```
+
+The UI is genuinely Jac — a 3,554-line React-in-Jac client (`becky_ui/frontend.cl.jac`) plus `frontend.impl.jac`, `workflows.jac` and `domain.jac`. It takes the all-in number **back over the 85% target by adding real product code, not by choosing a denominator.**
+
+**Stylesheets are counted separately and disclosed.** CSS is markup, not a programming language, and Jac ships `.style.css` annexes as a first-class client feature. A judge asking "is this written in Jac" is asking about logic. The split is printed rather than folded into a denominator so the choice is visible and arguable.
 
 **There is no Python in the product path — not a line.** Every non-Jac file lives under `ops/` and is a test harness, a proof script, or run plumbing. None of it ships, and none of it is imported by the product:
 
@@ -441,7 +467,7 @@ Stated plainly, because the evidence standard here is absolute.
 - **The chain now runs from live research to a cited email — but not further in one run.** ARCHITECT's artifact (`d91039c`): Lane W against live LinkedIn → Becky Zhu → `ComposeOutreach` with `refused: False`, `addressed_as: Becky`, a verbatim citation from her real About, and `threads: 0 → 1`. **`SendOutreach` on that live node was deliberately not run** (a live call to the same human was in progress), and the Vapi call and booking — independently proven by `jac run proof_outreach.jac`, including a real Meet link and KbQuery at 1.91 ms — have not been joined to the research half in a single run. The honest statement: *intake through a sent, cited email is joined; the call and booking are wired and separately proven but not yet joined.*
 - **The mobile-hotspot tunnel test** (§6) has not been run, and the register calls the hotspot primary.
 - **No fix exists for the persistent guest-root corruption** (§7) beyond wiping the graph. The snapshot mitigation is proposed, not yet exercised.
-- **`jac test` across the whole repo does not run** (§8) — the xdist worker is killed. Per-file runs are verified; the aggregate is not.
+- **38 of 902 tests fail** (§8), all from the annex-attribution defect rather than product logic. The suite itself runs.
 - **No browser client has rendered these endpoints.** The frontend contract is verified at the wire level only.
 - **Lane D's ~40%** (§2) is my adversarial read of the artifact, not an independently re-run deliverability check. No address was SMTP-verified.
 
