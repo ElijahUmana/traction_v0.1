@@ -53,7 +53,7 @@ import from time { time }
 import from gh { gh, GhResponse }
 import from emailgate {
     judge_email, best_of, scan_emails, is_deliverable, attribution_score,
-    EmailVerdict
+    alpha_only, EmailVerdict
 }
 import from contracts {
     LaneId, EmailSource, CompletenessTier, IdentityTier,
@@ -691,10 +691,48 @@ walker CrossLinkToLinkedIn {
             company=payload.get("company", "") as str,
             about=self._first_sentences(about, 2)
         );
-        here +>:Identity(tier=IdentityTier.PROBABLE,
-                         basis="light pass from Lane D: headline, company and the "
-                               + "opening of About, matched on name",
-                         confidence=0.72):+> prof;
+        # The basis string used to claim "matched on name" while nothing in this
+        # path compared a name -- the tier and confidence were hardcoded. A
+        # confidence asserted by code that never did the work the assertion
+        # describes is the same defect class as a lane narrating "comments are
+        # closed" when its selector merely missed. So do the comparison, and let
+        # its result choose the tier.
+        #
+        # Per the enum: PROBABLE is "same full name PLUS same company or same
+        # distinctive handle". A bare name match is circumstantial and only
+        # earns POSSIBLE.
+        name_ok = self._names_match(prof.name, here.name);
+        company_ok = self._companies_match(prof.company, here.company);
+        handle_ok = bool(prof.handle) and (
+            alpha_only(prof.handle) == alpha_only(here.handle)
+        );
+
+        if name_ok and (company_ok or handle_ok) {
+            tier = IdentityTier.PROBABLE;
+            confidence = 0.72;
+            corroborator = "the same company" if company_ok else "the same handle";
+            basis = (
+                f"light pass from Lane D: the LinkedIn name {prof.name!r} matches "
+                + f"{here.name!r} and {corroborator} appears on both sides"
+            );
+        } elif name_ok {
+            tier = IdentityTier.POSSIBLE;
+            confidence = 0.5;
+            basis = (
+                f"light pass from Lane D: the LinkedIn name {prof.name!r} matches "
+                + f"{here.name!r}, but neither company nor handle corroborates it"
+            );
+        } else {
+            tier = IdentityTier.POSSIBLE;
+            confidence = 0.3;
+            basis = (
+                f"light pass from Lane D: harvested for handle {here.handle!r}, but "
+                + f"the LinkedIn name {prof.name or '(none read)'!r} does not match "
+                + f"{here.name!r} - attaching the profile so a human can judge, and "
+                + "saying plainly that nothing was verified"
+            );
+        }
+        here +>:Identity(tier=tier, basis=basis, confidence=confidence):+> prof;
         if not here.linkedin_url {
             here.linkedin_url = prof.url;
         }
@@ -703,7 +741,36 @@ walker CrossLinkToLinkedIn {
         }
         self.linked += 1;
         report {"handle": here.handle, "matched": True, "url": prof.url,
-                "headline": prof.headline};
+                "headline": prof.headline, "tier": str(tier),
+                "confidence": confidence, "basis": basis};
+    }
+
+    """Do two names refer to the same human?
+
+    Compares alphabetic tokens so punctuation, casing and middle initials do not
+    decide identity. Requires the surname plus at least one other token, so
+    "J Smith" does not silently match "Jane Smith"."""
+    def _names_match(a: str, b: str) -> bool {
+        at: list[str] = [alpha_only(t) for t in a.split() if len(alpha_only(t)) > 1];
+        bt: list[str] = [alpha_only(t) for t in b.split() if len(alpha_only(t)) > 1];
+        if len(at) < 2 or len(bt) < 2 {
+            return False;
+        }
+        if at[-1] != bt[-1] {
+            return False;
+        }
+        shared = [t for t in at[:-1] if t in bt[:-1]];
+        return len(shared) > 0;
+    }
+
+    """Do two company strings plausibly name the same employer?"""
+    def _companies_match(a: str, b: str) -> bool {
+        an = alpha_only(a);
+        bn = alpha_only(b);
+        if len(an) < 3 or len(bn) < 3 {
+            return False;
+        }
+        return (an == bn) or (an in bn) or (bn in an);
     }
 
     """Two sentences is the whole budget. More is Lane C's job, not Lane D's."""
