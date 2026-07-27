@@ -17,10 +17,11 @@ Every JSON payload below was **captured from the running server**, not hand-writ
 
 | You want | Call |
 |---|---|
-| The 4 lane panels + their iframe URLs | `POST /function/list_lanes` |
+| The lane panels + their iframe URLs (**five** — A,B,C,D,W — not four; §2.1) | `POST /function/list_lanes` |
 | The prospect ledger (incl. drops) | `POST /function/list_prospects` |
 | Run header / counts | `POST /function/get_run_state` |
-| **Everything at once (poll this)** | `POST /function/feed_since` |
+| **Everything at once (poll this)** | `POST /function/feed_since` with `{"since": 0}` |
+| Start a run | `POST /walker/PlanCampaign`, `POST /walker/RunResearch` (§8) |
 | Live fan-out to all panels | `ws://…/ws/walker/LiveFeed` |
 | SSE fallback | `POST /function/feed_backlog` |
 
@@ -43,7 +44,7 @@ Every HTTP response is wrapped. **This is not the same shape as the WebSocket fr
 ```
 
 - **Read `data.result`** for every endpoint in §2–§3 (they are functions).
-- `data.reports` is `[]` for functions. It is only populated for walkers (§5).
+- `data.reports` is `[]` for functions. It is only populated for **walkers** — see §8, where the payload is at `data.reports[0]` instead.
 - On failure `ok` flips to `false` and `error` is `{ "code", "message", "details" }`, e.g. `{"code": "EXECUTION_ERROR", ...}`.
 
 All endpoints are **`POST`**, always `Content-Type: application/json`, always with a JSON object body. A `GET` on the same path returns **404**, not the data and not a signature.
