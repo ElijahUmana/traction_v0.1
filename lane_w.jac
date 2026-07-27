@@ -265,15 +265,35 @@ glob ACTIVITY_JS: str = """
 # behaviour; anything that touches her notifications is not.
 glob CONTACT_JS: str = """
 (function(){
-  const txt = (document.body.innerText || '').trim();
-  const start = txt.search(/contact info/i);
-  const slice = start >= 0 ? txt.slice(start, start + 1500) : txt.slice(0, 1200);
-  const links = Array.from(document.querySelectorAll('a[href]'))
+  // SCOPED TO THE OVERLAY, AND FAILS CLOSED.
+  //
+  // The first version collected links with document.querySelectorAll('a[href]')
+  // -- the WHOLE page, not the modal. CrossLinkToGithub treats a github.com
+  // link found here as a short-circuit to VERIFIED at 0.97, on the reasoning
+  // that LinkedIn only renders what the person entered themselves. That
+  // reasoning holds for the modal and nowhere else: one stray
+  // github.com/<someone-else> from the sidebar or a suggested-profile rail
+  // would inherit VERIFIED and skip every corroboration check downstream.
+  // Same defect as the About capture swallowing six strangers, one field over.
+  //
+  // So: find the dialog, and if there is no dialog, return NOTHING. An empty
+  // contact harvest costs one signal. A contaminated one attaches a stranger's
+  // GitHub account to this person at 0.97 confidence and calls it verified.
+  const modal = document.querySelector(
+    '[role="dialog"], .artdeco-modal, .pv-contact-info, section.pv-contact-info'
+  );
+  if (!modal) {
+    return {text: '', links: [], scoped: false,
+            why: 'no contact-info dialog on the page - refusing to fall back to a '
+                 + 'document-wide scrape, which would mix in other people'};
+  }
+  const txt = (modal.innerText || '').replace(/\\s+/g, ' ').trim();
+  const links = Array.from(modal.querySelectorAll('a[href]'))
     .map(a => a.href)
     .filter(h => /github\\.com|twitter\\.com|x\\.com|mailto:|^https?:/i.test(h)
                  && !/linkedin\\.com\\/(feed|mynetwork|jobs|messaging|notifications)/i.test(h))
     .slice(0, 25);
-  return {text: slice, links: links, url: location.href.split('?')[0]};
+  return {text: txt.slice(0, 1500), links: links, scoped: true, why: ''};
 })()
 """;
 
@@ -468,6 +488,18 @@ walker LaneW {
         if self.browser.goto(contact_url) {
             contact: dict = self.browser.eval_json(CONTACT_JS) or {};
             links: list = contact.get("links") or [];
+            if not contact.get("scoped") {
+                # Fail closed, and say so. A silent empty field would look like
+                # "she published no contact info" rather than "we refused to
+                # guess", and the cross-link would draw the wrong conclusion.
+                here.narrate(
+                    "Could not scope the contact-info overlay, so I harvested "
+                    + f"nothing from it: {contact.get('why')}. Better one signal "
+                    + "short than a stranger's GitHub attached to her at high "
+                    + "confidence.",
+                    ReasoningKind.MISS, time.time()
+                );
+            }
             self.contact_info_text = (str(contact.get("text") or "") + " "
                                       + " ".join([str(x) for x in links])).strip();
             gh = [x for x in links if "github.com" in str(x).lower()];
