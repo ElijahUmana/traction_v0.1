@@ -202,32 +202,75 @@ start_server() {
   nohup sh -c "tail -f /dev/null | jac start main.jac --no-client -p $PORT" \
     > "$LOG" 2>&1 &
 
-  # 90s is not enough after `--clean`: `jac clean --all` throws away the
-  # compiled JIR too, so the next boot recompiles the whole project before it
-  # binds the port. Timing out here and printing "server never became healthy"
-  # while the compiler is still working is how you end up wiping a data dir
+  # READINESS IS A REAL ENDPOINT, NEVER /healthz.
+  # FRONTEND caught /healthz returning {"status":"ok"} for the entire duration of
+  # the _lock failure while all five function endpoints 500'd. Gating on it means
+  # declaring a dead server up. graph_health traverses
+  # founders -> Runs -> HasLane, so a 200 from it proves the persisted graph is
+  # actually readable - which is the property we care about.
+  #
+  # 300s, not 90s: `jac clean --all` throws away the compiled JIR, so the next
+  # boot recompiles the whole project before it binds. Timing out mid-compile and
+  # printing "server never became healthy" is how you end up wiping a data dir
   # that was never the problem.
-  local i
+  local i code bound=0
   for i in $(seq 1 300); do
-    if curl -s -m 2 -o /dev/null "http://127.0.0.1:$PORT/healthz" 2>/dev/null; then
-      echo "    healthy after ${i}s"
+    code="$(curl -s -m 5 -o /dev/null -w '%{http_code}' -X POST \
+      "http://127.0.0.1:$PORT/function/graph_health" \
+      -H 'Content-Type: application/json' -d '{}' 2>/dev/null || echo 000)"
+    if [ "$code" = "200" ]; then
+      echo "    serving real traffic after ${i}s (graph_health 200)"
       return 0
+    fi
+    if [ "$code" != "000" ] && [ "$bound" = "0" ]; then
+      bound=1
+      echo "    port bound at ${i}s, but graph_health says $code - still waiting for a REAL 200"
     fi
     if [ $((i % 30)) -eq 0 ]; then
       echo "    still booting (${i}s) - a post-\`jac clean\` boot recompiles everything"
     fi
     sleep 1
   done
+  echo "    gave up after ${i}s (last graph_health: ${code:-none})"
   return 1
 }
 
 echo "==> starting"
+# PARSE .env, do not `.` it. `jac start` does not read it itself, so we must
+# export it - but sourcing executes the file, and under `set -euo pipefail` one
+# unquoted value with a space in it (SPOKEN_NAME=Elijah Oo-mah-na) aborts the
+# whole script before it ever reaches the start line. That cost us an afternoon.
+# Take only KEY=VALUE lines and quote every value.
+load_env() {
+  # Read KEY=VALUE and export it WITHOUT eval. Two failure modes this avoids,
+  # both of which we actually hit:
+  #   1. `. ./.env` EXECUTES the file. Under `set -euo pipefail` one unquoted
+  #      value with a space (SPOKEN_NAME=Elijah Oo-mah-na) aborts the script
+  #      before it reaches the start line.
+  #   2. The obvious "fix", re-quoting every value with sed, breaks the moment a
+  #      value is ALREADY quoted: SPOKEN_NAME="Elijah Zhu" becomes
+  #      SPOKEN_NAME=""Elijah Zhu"" and the shell tries to run `Zhu`. Found by
+  #      running this script, not by reading it.
+  # So: no eval anywhere. Strip at most one layer of matching quotes and export.
+  local line key val
+  while IFS= read -r line || [ -n "$line" ]; do
+    line="${line%$'\r'}"                       # tolerate CRLF
+    case "$line" in ''|'#'*) continue ;; esac
+    case "$line" in *=*) ;; *) continue ;; esac
+    key="${line%%=*}"
+    [[ "$key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || continue
+    val="${line#*=}"
+    case "$val" in
+      \"*\") val="${val#\"}"; val="${val%\"}" ;;
+      \'*\') val="${val#\'}"; val="${val%\'}" ;;
+    esac
+    export "$key=$val"
+  done < "$1"
+}
+
 if [ -f ./.env ]; then
-  echo "    sourcing .env (jac start does not read it itself)"
-  set -a
-  # shellcheck disable=SC1091
-  . ./.env
-  set +a
+  echo "    loading .env (parsed, never evaluated)"
+  load_env ./.env
   if [ -z "${ANTHROPIC_API_KEY:-}" ]; then
     echo "    !! WARNING: ANTHROPIC_API_KEY still unset - every by llm() call will return null"
   fi
@@ -239,10 +282,22 @@ if ! start_server; then
   echo "!! server never became healthy - see $LOG"; tail -20 "$LOG"; exit 1
 fi
 
+# Record who owns this data dir, so the next restart stops exactly this process
+# and no one else's. Above .jac/data so a `rm -rf .jac/data` cannot orphan it.
+SERVER_PID="$(pgrep -f "jac start main.jac --no-client -p $PORT" | head -1)"
+mkdir -p "$(dirname "$LOCK")"
+{ echo "pid=${SERVER_PID:-unknown}"; echo "port=$PORT"; echo "dir=$PWD"; } > "$LOCK"
+echo "==> holding $LOCK (pid ${SERVER_PID:-unknown}, port $PORT)"
+
 echo "==> warmup (first anonymous request also initialises the guest root)"
-curl -s -m 10 -o /dev/null -w "    warmup: %{http_code}\n" -X POST \
+WARM="$(curl -s -m 15 -o /dev/null -w '%{http_code}' -X POST \
   "http://127.0.0.1:$PORT/function/get_run_state" \
-  -H 'Content-Type: application/json' -d '{}'
+  -H 'Content-Type: application/json' -d '{}' 2>/dev/null || echo 000)"
+echo "    warmup: $WARM"
+if [ "$WARM" != "200" ]; then
+  echo "    !! warmup did not return 200 - falling through to the smoke gate,"
+  echo "       which will repair or fail loudly rather than report a dead server ready"
+fi
 
 # -----------------------------------------------------------------------------
 # smoke gate
@@ -278,12 +333,15 @@ else
   if grep -q "no attribute '_lock'" "$LOG"; then
     echo "    -> _lock AttributeError in the log: divergent guest root got through"
     echo "       the preflight. Repairing and restarting ONCE."
-    pkill -9 -f "jac start" 2>/dev/null || true
+    pkill -9 -f "jac start main.jac --no-client -p $PORT" 2>/dev/null || true
+    lsof -ti tcp:"$PORT" 2>/dev/null | xargs -r kill -9 2>/dev/null || true
     sleep 3
     repair_guest_root
     if ! start_server; then
       echo "!! server never became healthy after repair - see $LOG"; tail -30 "$LOG"; exit 1
     fi
+    SERVER_PID="$(pgrep -f "jac start main.jac --no-client -p $PORT" | head -1)"
+    { echo "pid=${SERVER_PID:-unknown}"; echo "port=$PORT"; echo "dir=$PWD"; } > "$LOCK"
     if smoke; then
       echo "    12/12 OK after repair"
     else
@@ -304,3 +362,8 @@ grep -i 'Registered WebSocket' "$LOG" | sed 's/^/    /' || {
   echo "       docs/FRONTEND_INTEGRATION.md), so this is a warning, not fatal."
 }
 echo "==> ready on http://127.0.0.1:$PORT"
+echo "    data dir : $PWD/$DATA   (anchor_store.db resolves relative to CWD -"
+echo "               a dedicated data dir means a dedicated DIRECTORY, never"
+echo "               JAC_DATA_PATH, which moves users.db but not the anchor store)"
+echo "    lock     : $PWD/$LOCK"
+echo "    NOTHING else may run jac in this directory while this server is up."

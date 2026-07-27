@@ -599,6 +599,75 @@ Notes that cost real time:
   declare it dead early.
 - Use a distinct `--port` so a stray server elsewhere can't shadow you.
 
+### 8e-i. 🔴 `JAC_DATA_PATH` DOES NOT ISOLATE A DATA DIR — it manufactures the bug
+
+The obvious way to give a server its own store is `JAC_DATA_PATH`. **Do not.** In
+jaclang 0.34.7 it moves two of the three files and not the third:
+
+| file | path resolution |
+|---|---|
+| `main.db` | honours `JAC_DATA_PATH` — `runtimelib/impl/server.impl.jac:16` |
+| `users.db` | honours `JAC_DATA_PATH` — `scale/identity/impl/user_manager.impl.jac:37` |
+| **`anchor_store.db`** | **ignores it** — hard-coded relative `'.jac/data/anchor_store.db'`, `scale/config/impl/config_loader.impl.jac:218`. Only a `database.shelf_db_path` key in jac.toml can move it; there is no env override. |
+
+So `JAC_DATA_PATH=/tmp/foo jac start` puts `users.db` under `/tmp/foo/.jac/data`
+and leaves `anchor_store.db` at `$CWD/.jac/data`. The guest root is then recorded
+in one store and absent from the other — **which is exactly the divergence that
+produces the permanent `_lock` 500s.** You would be hand-building the failure you
+were trying to isolate away from, and it would look like the bug appearing
+spontaneously in a "clean" environment.
+
+`anchor_store.db` resolves relative to the working directory, so **the only thing
+that isolates a Jac server is its own DIRECTORY.** That is why the isolated
+checkout above works, and it is what `ops/serve.sh` automates.
+
+### 8e-ii. `/healthz` returns 200 for the entire duration of the failure
+
+Caught live by FRONTEND with timestamps: the server served ~10 requests, another
+process touched `.jac/data`, and from then on every function endpoint 500'd —
+while `/healthz` kept answering `{"status":"ok"}`, 6/6.
+
+**Anything that gates on `/healthz` is worthless for this failure**, including a
+start script's wait-for-health loop: it declares a dead server up and hands it to
+the dashboard, which then just looks frozen. Gate on a real endpoint instead —
+`POST /function/graph_health`, which traverses `founders → Runs → HasLane` and so
+proves the persisted graph is actually readable. `ops/restart.sh` and
+`ops/serve.sh --status` both do this; neither trusts `/healthz`.
+
+### 8e-iii. The `_lock` defect is unconditional — no setting can turn it off
+
+Worth stating because two plausible config theories were chased and both are dead:
+
+- **`[scale.websocket]` is not involved.** A/B, two full copies of the repo, fresh
+  data, 60 anonymous POSTs each: `OK=60 FAIL=0` **both with and without the
+  block**. The copy without it still logged the scale Redis warning 63 times and
+  still registered `/ws/walker/LiveFeed`. `jac0core/runtime.jac:85 _scale_provider`
+  is a bare `try { import jaclang.scale.plugin } except ImportError` with no
+  jac.toml gate, and scale ships inside the binary, so it loads either way.
+- **`REDIS_URL` is not involved.** It is set in the shell env and every start logs
+  `Redis connection failed: 'NoneType' object has no attribute 'from_url'` — but
+  that warning was present 63 times during the `OK=60 FAIL=0` run. A condition
+  present throughout success is not the cause of failure. `JacScaleUserManager.postinit`
+  has no Redis branch at all, and no branch of it sets `_lock`.
+
+`_lock` is set in exactly one place, `UserManager.postinit`
+(`runtimelib/impl/server.impl.jac:12`), which the scale subclass overrides and
+never calls. So the attribute is **always** absent, in every environment,
+including the clean isolated checkout that runs green forever — it simply is
+never read there, because the only reader is `reset_root`, and `reset_root` only
+fires when the guest root anchor is missing. A missing attribute costs nothing
+until something reads it.
+
+The practical consequence: **stop looking for a setting that fixes this.** There
+isn't one. The only levers are preventing the divergence (one process per data
+dir — `ops/serve.sh`) and repairing it before serving (`ops/restart.sh`'s
+preflight, which drops `users.db` and keeps the graph).
+
+It is also doubly broken: even with `_lock` present, `reset_root` does
+`SELECT 1 FROM users` against `main.db`, while scale keeps identities in
+`users.db` via `SqliteIdentityStorage`. The guest heal path cannot work under
+scale at all.
+
 ## 9. Stale state
 
 `jac clean --all --force` (or `rm -rf .jac/`) when you see
