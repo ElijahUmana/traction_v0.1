@@ -90,6 +90,99 @@ Measured before/after with graph counts — this is what it looks like:
 dashboard shows no error, and nothing happened. Always confirm a stage moved the
 graph, never that it returned 200.
 
+### 0.16 ⛔ An imported enum MEMBER referenced in a `def:pub` body can vanish at request time
+
+Observed live: `POST /function/graph_health` began returning 500 with
+`name 'CompletenessTier' is not defined` — while `jac check` stayed completely
+green, because it is a runtime symbol-resolution failure, not a type error.
+
+Nothing about the endpoint changed. A **new module joined `main.jac`'s import
+registry**, the init order shifted, and the symbol stopped resolving inside the
+function body.
+
+**The distinction that matters — same symbol, opposite exposure:**
+
+| Use site | Resolved | Exposed |
+|---|---|---|
+| node field default — `has tier: CompletenessTier = CompletenessTier.DROPPED;` | once, at module load, with that module's own import already bound | **no** |
+| `def:pub` body — `if p.tier == CompletenessTier.DROPPED { ... }` | per request, after every module has loaded in whatever order the registry settled on | **YES** |
+
+So a schema file declaring enum-typed fields is safe. An **endpoint body** that
+evaluates an enum member is not, and it fails only once someone adds or reorders
+an import somewhere else entirely.
+
+**Fix — remove the dependency rather than add an import.** Every enum in
+`contracts` is str-backed, so the member IS the string:
+
+```jac
+if p.tier == CompletenessTier.DROPPED { ... }   # resolves at request time
+if p.tier == "DROPPED" { ... }                  # ✅ cannot fail to resolve
+```
+Adding `import from contracts { CompletenessTier }` is the tempting fix and it
+is usually a **no-op** — the import is typically already there (it was, in both
+`schema.jac` and `main.jac`). That leaves the real problem live while looking
+like a fix. Comparing to the literal is immune by construction rather than
+immune until the next module lands.
+
+**Trade-off, stated honestly — and it has a sharp edge.** You lose compile-time
+checking of that one comparison, and the failure mode that opens is nasty: **a
+typo'd literal is a silently always-false branch.** `jac check` cannot catch it,
+because `"linkedn"` is a perfectly valid `str`. The enum-member version at least
+fails loudly on a misspelling.
+
+So the pattern trades a *loud* failure that only strikes when imports reorder
+for a *silent* one that strikes if you mistype. That is still the right trade in
+an endpoint that must keep answering while modules land around it — but only
+with the two mitigations below, because the risk is worse than "watch your
+spelling".
+
+**Risk 1 — the casing convention is NOT uniform across `contracts.sv.jac`, so a
+correct memory of one enum produces a wrong literal for the next.** Verified
+against the file:
+
+```
+LaneId.A            = "A"          ← UPPERCASE
+CompletenessTier.S  = "S"          ← UPPERCASE
+CompletenessTier.DROPPED = "DROPPED"
+EvidenceSource.LINKEDIN  = "linkedin"    ← lowercase
+EvidenceKind.COMMENT     = "comment"     ← lowercase
+IdentityTier.VERIFIED    = "verified"    ← lowercase
+```
+Ten of the twelve enums are lowercase words; the two exceptions are the ones
+using short codes (`LaneId` A/B/C/D/W, `CompletenessTier` S/A/DROPPED). So a
+projection helper comparing `ev.source == "linkedin"` and `p.tier == "S"` three
+lines apart is correct in **two different conventions at once** — and
+neighbouring uppercase code is exactly what makes `p.tier == "s"` feel right
+while typing it. That branch is then silently always-false and drops every
+S-tier prospect off the dashboard, with a clean `jac check`.
+
+**Risk 2 — literals lose the type distinction the enum member carried.**
+`LaneId.A` and `CompletenessTier.A` are **both** `"A"`. As enum members they are
+different types and a mix-up is a check error; as literals, `p.tier == "A"` and
+`lane.lane_id == "A"` are both valid and mean entirely different things. The
+compiler stops helping precisely where two enums share a value.
+
+**Mitigation: copy each value out of the declaration at the moment you write the
+comparison.** Not from memory, not from a message, not from this file — the
+values above are documentation and could themselves drift. Open
+`contracts.sv.jac` and copy.
+
+> The inconsistent casing is a wart in `contracts.sv.jac` and it is mine. **Do
+> not "fix" it by normalising the values** — these strings are persisted in the
+> graph (the committed `anchor_store.CLEANCHAIN.db` holds `"linkedin"` and
+> `"S"`), so changing them silently invalidates every stored node and every
+> snapshot restore. If it is ever worth harmonising, that is a migration, not an
+> edit.
+
+Leave a comment at the site too, or someone will "tidy" it back to the enum
+member. (Credit to BRIDGE for spotting the typo risk — the original version of
+this entry recommended the pattern without naming its cost.)
+
+**Audit your own endpoints for this.** Confirmed exposed at the time of writing:
+`bridge.jac`'s `_lane_source` / `_lane_title` (`LaneId.D/W/A`) and
+`_prospect_view` (`EvidenceSource.LINKEDIN/GITHUB`, `CompletenessTier.S/.A`).
+`main.jac` was swept and is clean.
+
 ### 0.2 Omitting `= []` on a walker list makes it a REQUIRED spawn parameter
 
 ```jac
