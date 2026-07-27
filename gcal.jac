@@ -116,21 +116,12 @@ async def create_meeting(
         # now+30 books a slot nobody asked for and then reports success - which
         # is how a real invite landed on the prospect's calendar for a time she
         # never agreed to. An unparseable time is a failure, not a default.
+        # Callers should resolve the phrase first (timeparse.resolve_spoken_time);
+        # anything still unparseable here has to fail loud.
         raise ValueError(
             f"gcal.create_meeting: could not understand the requested time "
             + f"'{start_iso}'. Refusing to book an arbitrary slot instead - say "
             + "the time back to the caller and ask them to repeat it."
-        );
-    } elif start_iso.strip() {
-        # A non-empty start that will not parse is NEVER a reason to book
-        # "soon". The old code fell through to now+fallback here and the agent
-        # went on to say "invite sent" - the human heard success and got a slot
-        # nobody asked for. Callers must resolve the time before calling
-        # (timeparse.resolve_spoken_time); an unresolvable one has to fail loud.
-        raise ValueError(
-            f"gcal.create_meeting: start_time '{start_iso}' is not ISO-8601 and was "
-            + "not resolved upstream. Refusing to silently book "
-            + f"{fallback_minutes} minutes from now instead of the time that was asked for."
         );
     }
     end: datetime = start + timedelta(minutes=minutes);

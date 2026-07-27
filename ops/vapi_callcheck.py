@@ -89,7 +89,7 @@ def tools() -> list[dict]:
                     "required": ["question"],
                 },
             },
-            "server": {"url": f"{base}/walker/KbQuery", "timeoutSeconds": 10},
+            "server": {"url": f"{base}/vapi/kb", "timeoutSeconds": 10},
         },
         {
             "type": "function",
@@ -105,25 +105,41 @@ def tools() -> list[dict]:
                     "properties": {
                         "start_time": {
                             "type": "string",
-                            "description": "ISO 8601 datetime with timezone offset.",
+                            "description": (
+                                "Your best attempt at ISO 8601 with a timezone offset. "
+                                "Leave empty if unsure of today's date - the server "
+                                "resolves spoken_time against the real clock."
+                            ),
+                        },
+                        "spoken_time": {
+                            "type": "string",
+                            "description": (
+                                "REQUIRED. The time exactly as the person said it, in "
+                                "their own words - 'thursday at 2', 'tomorrow afternoon'. "
+                                "Do not reword or resolve it."
+                            ),
                         },
                         "duration_minutes": {"type": "number"},
                     },
-                    "required": ["start_time"],
+                    "required": ["spoken_time"],
                 },
             },
+            # No static request-complete: Vapi speaks it INSTEAD of the tool
+            # result, so the agent would assert an invite was sent regardless of
+            # what actually happened. This harness must reproduce the real
+            # assistant exactly, or it certifies a path nobody ships.
             "messages": [
-                {"type": "request-start", "content": "Booking that now."},
-                {
-                    "type": "request-complete",
-                    "content": "Done, the invite is on its way to your email.",
-                },
+                {"type": "request-start", "content": "Let me get that booked."},
                 {
                     "type": "request-failed",
-                    "content": "I couldn't get that booked, I'll follow up by email.",
+                    "role": "system",
+                    "content": (
+                        "The booking did not go through. Say plainly that it did not "
+                        "work, never imply an invite was sent, and say briefly why."
+                    ),
                 },
             ],
-            "server": {"url": f"{base}/walker/BookInterview", "timeoutSeconds": 25},
+            "server": {"url": f"{base}/vapi/book", "timeoutSeconds": 25},
         },
     ]
 
