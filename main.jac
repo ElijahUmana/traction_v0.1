@@ -49,7 +49,18 @@ import from research {
 import from githublane { GithubLane }
 import from identity { CrossLinkToGithub, CrossLinkToLinkedIn, ResolveEmail, RankAndSelect }
 import from outreach { ComposeOutreach, SendOutreach, OnEmailReply }
-import from voice    { ScheduleCall, KbQuery, BookInterview, OnCallEnd }
+# vapi_kb and vapi_book are the only two endpoints in this program that are
+# functions rather than walkers, and the reason is the wire format, not the
+# work. Vapi reads `results` at the TOP LEVEL of the response body; every jac
+# walker and function is wrapped in {"ok":...,"data":{"result":...}}, so our
+# correctly-formed results array sat at data.reports[0].results where Vapi
+# never looks, and the agent was told "No result returned" on a live call.
+# `@restspec(envelope=False)` sends the return value to the wire verbatim - and
+# the runtime honours it on the FUNCTION path only (the walker endpoint builder
+# ignores it). So these two spawn the KbQuery/BookInterview walkers to do all
+# the traversal and own nothing but the wire format. They must be imported here
+# or the /vapi/* routes never register and the tools 405.
+import from voice    { ScheduleCall, KbQuery, BookInterview, OnCallEnd, vapi_kb, vapi_book }
 import from rehearsal { SeedRehearsalProspect }
 import from feedseed {
     SeedRehearsalRun, SeedRehearsalReasoning,
