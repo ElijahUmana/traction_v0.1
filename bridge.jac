@@ -612,7 +612,7 @@ def _persona_view(lane: Lane, pain: str) -> PersonaView {
         signal=lane.current_query,
         research_goal="",
         source_plan=_lane_source(lane.lane_id),
-        approved=True
+        approved=lane.approved
     );
 }
 
@@ -627,7 +627,8 @@ def _persona_view(lane: Lane, pain: str) -> PersonaView {
 # WorkspaceView fields with no source in our graph:
 #   company             - our Founder node has no company field.
 #   understanding_note  - we store no founder commentary on the understanding.
-#   persona_note        - we store no founder commentary on the personas.
+#   understanding_note  - the confirm step's note has no home; ICP.founder_note
+#                         carries the PERSONA note, and one field cannot hold two.
 #   zoom_connected      - always False, and true: we book Google Meet, never Zoom.
 
 def _workspace() -> WorkspaceView {
@@ -639,6 +640,9 @@ def _workspace() -> WorkspaceView {
 
     hypothesis = icp.hypothesis if icp is not None else "";
     pain = "; ".join(icp.pain_phrases) if icp is not None else "";
+    # The founder's note from the persona-review step, read back from where
+    # save_persona_feedback stored it.
+    note = icp.founder_note if icp is not None else "";
 
     understanding: ProductUnderstanding | None = None;
     if who is not None {
@@ -724,7 +728,7 @@ def _workspace() -> WorkspaceView {
         understanding_note="",
         artifact_names=artifact_names,
         personas=personas,
-        persona_note="",
+        persona_note=note,
         prospects=prospects,
         activities=activities,
         insights=insights,
@@ -896,16 +900,47 @@ def:pub build_personas() -> WorkspaceView {
 }
 
 
-# HONEST NO-OP. Our graph has nowhere to record founder approval of a lane or a
-# free-text note about the personas: `Lane` has no approval field and `ICP` has
-# no note field, and this file is forbidden from declaring archetypes
-# (JAC_GOTCHAS 8d - a second `Lane` archetype would poison every traversal that
-# matches by name). The call therefore succeeds and changes nothing, and
-# `persona_note` comes back empty rather than echoing the note as if stored.
-# Fixing this properly is two fields in schema.jac; it is not mine to add.
+# Real, as of ARCHITECT adding `ICP.founder_note` and `Lane.approved` to
+# schema.jac. This was an honest no-op until those two fields existed - it
+# returned an empty `persona_note` rather than echoing the founder's note back
+# as though it had been stored, because a UI that reflects your note is a UI
+# claiming a persistence it does not have.
+#
+# A deselected lane is marked `approved=False`, never deleted, so the run it
+# belongs to still shows what the founder rejected and why the ledger is
+# shorter than the fan-out.
 def:pub save_persona_feedback(
     note: str, selected_ids: list[str] | None = None
 ) -> WorkspaceView {
+    who = _founder();
+    if who is None {
+        return _workspace();
+    }
+    owner: Founder = who as Founder;
+    icp = _icp(owner);
+    if icp is not None {
+        target: ICP = icp as ICP;
+        target.founder_note = note;
+    }
+    run = _latest_run(owner);
+    if run is not None {
+        current: ResearchRun = run as ResearchRun;
+        lanes: list[Lane] = [current ->:HasLane:->];
+        # An absent or empty selection means "keep all", matching her mock:
+        # her client already substitutes the full id list when the founder
+        # deselects nothing (frontend.impl.jac:280), so an empty list here is
+        # the founder having approved everything, never having rejected it.
+        if selected_ids {
+            picked: list[str] = selected_ids as list[str];
+            for lane in lanes {
+                lane.approved = jid(lane) in picked;
+            }
+        } else {
+            for lane in lanes {
+                lane.approved = True;
+            }
+        }
+    }
     return _workspace();
 }
 
@@ -939,13 +974,38 @@ def:pub run_signal_search() -> WorkspaceView {
     #
     # Unset the flag and the real fan-out runs, unchanged, below.
     if cfg("TRACTION_DEMO", "") {
+        # Say so. Demo mode returns 200 in milliseconds having launched
+        # nothing, which on the wire is indistinguishable from the live path
+        # silently failing to fire - the exact shape of the bug that costs a
+        # demo (§0.15). One line in the log tells the two apart.
+        print(
+            "[bridge] run_signal_search: TRACTION_DEMO is set - returning the "
+            + "research already on the graph, live fan-out NOT launched."
+        );
         return _workspace();
     }
 
-    root spawn RunResearch();
-    root spawn CrossLinkToLinkedIn();
-    root spawn ResolveEmail();
-    root spawn RankAndSelect();
+    researched = root spawn RunResearch();
+    run_reports = researched.reports;
+    print(f"[bridge] run_signal_search: RunResearch -> {run_reports}");
+    if not run_reports {
+        # A walker that reports nothing did not run. Spawning on root is a
+        # silent no-op when the entry ability triggers on a node type, and it
+        # returns 200 with an untouched graph (§0.15).
+        print(
+            "[bridge] run_signal_search: RunResearch reported NOTHING - it did "
+            + "not run. Check that its Root entry ability fired."
+        );
+    }
+    linked = root spawn CrossLinkToLinkedIn();
+    gated = root spawn ResolveEmail();
+    print(
+        f"[bridge] run_signal_search: crosslinked={linked.linked} "
+        + f"emails_resolved={gated.resolved} dropped={gated.dropped}"
+    );
+    ranked = root spawn RankAndSelect();
+    rank_reports = ranked.reports;
+    print(f"[bridge] run_signal_search: RankAndSelect -> {rank_reports}");
     return _workspace();
 }
 
