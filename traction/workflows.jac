@@ -811,6 +811,76 @@ walker RecordExternalEvent {
     }
 }
 
+walker ScheduleAgentCall {
+    has prospect_id: str;
+
+    can begin with Root entry {
+        visit [-->[?:Founder]];
+    }
+
+    can founder_to_product with Founder entry {
+        visit [->:OwnsProduct:->];
+    }
+
+    can product_to_hypothesis with Product entry {
+        visit [->:SuggestsHypothesis:->];
+    }
+
+    can hypothesis_to_signal with ProductHypothesis entry {
+        visit [->:SupportedBySignal:->];
+    }
+
+    can signal_to_prospect with PainSignal entry {
+        visit [->:RevealsProspect:->];
+    }
+
+    can schedule with Prospect entry {
+        if jid(here) != self.prospect_id {
+            skip;
+        }
+        drafts = [here->:PromptsOutreach:->];
+        if not drafts {
+            disengage;
+        }
+        threads = [drafts[0]->:OpensThread:->];
+        if not threads {
+            disengage;
+        }
+        if here.status in ["Call scheduled", "Booked"] {
+            disengage;
+        }
+        here.status = "Call scheduled";
+        threads[0] +>:LogsActivity:+> ExternalActivity(
+            timestamp="Today · 1:04 PM",
+            channel="Gmail",
+            activity_type="email",
+            identity="Becky Zhu <becky@traction.ai>",
+            state="Replied",
+            label="Interested reply received",
+            link_label="Open reply",
+            external_url="https://mail.google.com/mail/u/0/#inbox",
+            prospect_name=here.name,
+            hypothesis=here.assumption_challenged,
+            is_demo=True
+        );
+        threads[0] +>:LogsActivity:+> ExternalActivity(
+            timestamp="Today · 1:05 PM",
+            channel="Phone",
+            activity_type="call",
+            identity="Traction agent on behalf of Becky Zhu",
+            state="Scheduled",
+            label="4-minute scheduling call booked",
+            link_label="Open call monitor",
+            external_url="",
+            prospect_name=here.name,
+            hypothesis=here.assumption_challenged,
+            learnable=False,
+            is_demo=True
+        );
+        disengage;
+    }
+}
+
 walker ScheduleFounderMeeting {
     has prospect_id: str,
         reports: list[Meeting] = [];
@@ -847,6 +917,7 @@ walker ScheduleFounderMeeting {
         if not threads {
             disengage;
         }
+        call_was_scheduled = here.status == "Call scheduled";
         here.status = "Booked";
         meeting = threads[0] +>:BooksMeeting:+> Meeting(
             starts_at="Tuesday, July 28 · 10:30 AM PT",
@@ -854,19 +925,21 @@ walker ScheduleFounderMeeting {
             zoom_url="https://zoom.us/j/1234567890",
             status="Booked"
         );
-        threads[0] +>:LogsActivity:+> ExternalActivity(
-            timestamp="Today · 1:04 PM",
-            channel="Gmail",
-            activity_type="email",
-            identity="Becky Zhu <becky@traction.ai>",
-            state="Replied",
-            label="Interested reply received",
-            link_label="Open reply",
-            external_url="https://mail.google.com/mail/u/0/#inbox",
-            prospect_name=here.name,
-            hypothesis=here.assumption_challenged,
-            is_demo=True
-        );
+        if not call_was_scheduled {
+            threads[0] +>:LogsActivity:+> ExternalActivity(
+                timestamp="Today · 1:04 PM",
+                channel="Gmail",
+                activity_type="email",
+                identity="Becky Zhu <becky@traction.ai>",
+                state="Replied",
+                label="Interested reply received",
+                link_label="Open reply",
+                external_url="https://mail.google.com/mail/u/0/#inbox",
+                prospect_name=here.name,
+                hypothesis=here.assumption_challenged,
+                is_demo=True
+            );
+        }
         threads[0] +>:LogsActivity:+> ExternalActivity(
             timestamp="Today · 1:09 PM",
             channel="Phone",
@@ -1135,6 +1208,11 @@ def:pub send_outreach(prospect_id: str, revised_body: str) -> WorkspaceView {
     root spawn ApproveAndSendOutreach(
         prospect_id=prospect_id, revised_body=revised_body
     );
+    return _workspace();
+}
+
+def:pub schedule_demo_call(prospect_id: str) -> WorkspaceView {
+    root spawn ScheduleAgentCall(prospect_id=prospect_id);
     return _workspace();
 }
 

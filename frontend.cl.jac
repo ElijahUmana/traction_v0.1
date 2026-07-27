@@ -18,6 +18,7 @@ sv import from traction.workflows {
     run_signal_search,
     draft_outreach,
     send_outreach,
+    schedule_demo_call,
     schedule_demo_meeting,
     synthesize_demo_interview,
     reset_workspace
@@ -45,7 +46,9 @@ def stage_index(phase: str) -> int {
         "DRAFTING_OUTREACH",
         "WAITING_FOR_APPROVAL",
         "LEAD_LIBRARY",
-        "TRACKING_EXTERNAL_ACTIVITY"
+        "TRACKING_EXTERNAL_ACTIVITY",
+        "LIVE_AGENT_CALL",
+        "CALENDAR_WORKSPACE"
     ] {
         return 2;
     }
@@ -59,7 +62,7 @@ def status_tone(status: str) -> str {
     if status == "Booked" {
         return "green";
     }
-    if status == "Sent" {
+    if status in ["Sent", "Call scheduled"] {
         return "blue";
     }
     return "neutral";
@@ -113,7 +116,11 @@ def:pub TractionApp -> JsxElement {
         profile_tab: str = "overview",
         draft_text: str = "",
         busy: bool = False,
-        notice: str = "";
+        notice: str = "",
+        live_call_prospect_id: str = "",
+        live_call_step: int = 0,
+        live_call_active: bool = False,
+        calendar_notice: str = "";
 
     async can with entry {
         load_workspace();
@@ -162,6 +169,9 @@ def:pub TractionApp -> JsxElement {
     def select_prospect(prospect_id: str) -> None;
     async def approve_and_send -> None;
     def skip_draft(_e: MouseEvent) -> None;
+    async def schedule_agent_call -> None;
+    async def open_live_call(prospect_id: str) -> None;
+    def close_live_call -> None;
     async def book_demo_meeting -> None;
     async def learn_from_interview -> None;
     async def jump_to_stage(stage: int) -> None;
@@ -169,12 +179,13 @@ def:pub TractionApp -> JsxElement {
     def go_profiles -> None;
     def back_to_profiles -> None;
     def set_profile_tab(tab: str) -> None;
+    def go_calendar -> None;
+    def refresh_calendar -> None;
     def go_home(_e: MouseEvent) -> None;
     async def rerun -> None;
 
     current_stage = stage_index(phase);
     is_home = phase in ["EMPTY", "MASCOT_ENTERING"];
-
     return
         <div
             className={"traction-app home-mode"
@@ -198,6 +209,7 @@ def:pub TractionApp -> JsxElement {
                     onActivity={lambda { phase = "TRACKING_EXTERNAL_ACTIVITY"
                         if workspace is not None and workspace.prospects
                         else "REACH_EMPTY"; }}
+                    onCalendar={go_calendar}
                     onLearn={lambda { phase = "LEARNING_FROM_MEETING"
                         if workspace is not None and workspace.prospects
                         else "LEARN_EMPTY"; }}
@@ -329,10 +341,33 @@ def:pub TractionApp -> JsxElement {
                     <ActivityWorkspace
                         key="activity"
                         workspace={workspace}
-                        onBook={book_demo_meeting}
+                        onScheduleCall={schedule_agent_call}
+                        onCall={open_live_call}
                         onOutreach={lambda { phase = "WAITING_FOR_APPROVAL"; }}
+                        onCalendar={go_calendar}
                         onLearn={lambda { phase = "LEARNING_FROM_MEETING"; }}
                         busy={busy}
+                    />
+                }}
+                {if phase == "LIVE_AGENT_CALL" and workspace is not None {
+                    <LiveCallWorkspace
+                        key="live-call"
+                        workspace={workspace}
+                        prospectId={live_call_prospect_id}
+                        step={live_call_step}
+                        active={live_call_active}
+                        onBack={close_live_call}
+                        onCalendar={go_calendar}
+                    />
+                }}
+                {if phase == "CALENDAR_WORKSPACE" and workspace is not None {
+                    <CalendarWorkspace
+                        key="calendar"
+                        workspace={workspace}
+                        notice={calendar_notice}
+                        onActivity={lambda { phase = "TRACKING_EXTERNAL_ACTIVITY"; }}
+                        onProfile={open_profile}
+                        onSync={refresh_calendar}
                     />
                 }}
                 {if phase == "LEARNING_FROM_MEETING" and workspace is not None {
@@ -427,6 +462,7 @@ def:pub WorkspaceViewNav(
     onProfiles: Callable[[], None],
     onDrafts: Callable[[], None],
     onActivity: Callable[[], None],
+    onCalendar: Callable[[], None],
     onLearn: Callable[[], None],
     busy: bool
 ) -> JsxElement {
@@ -453,12 +489,23 @@ def:pub WorkspaceViewNav(
                 </button>
                 <button
                     className={"workspace-view-link active"
-                        if phase == "TRACKING_EXTERNAL_ACTIVITY"
+                        if phase in [
+                            "TRACKING_EXTERNAL_ACTIVITY", "LIVE_AGENT_CALL"
+                        ]
                         else "workspace-view-link"}
                     onClick={onActivity}
                     disabled={busy or not hasProfiles}
                 >
                     Activity tracking
+                </button>
+                <button
+                    className={"workspace-view-link active"
+                        if phase == "CALENDAR_WORKSPACE"
+                        else "workspace-view-link"}
+                    onClick={onCalendar}
+                    disabled={busy or not hasProfiles}
+                >
+                    Calendar
                 </button>
                 <button
                     className={"workspace-view-link active"
@@ -501,17 +548,11 @@ def:pub Mascot(state: str = "waiting") -> JsxElement {
             <div className="mascot-art" aria-hidden="true">
                 <img
                     className="mascot-image"
-                    src={"/compiled/public/traction-mascot-laptop-cutout.png"
+                    src={"/public/traction-mascot-laptop-cutout.png"
                         if state in ["typing", "thinking"]
-                        else "/compiled/public/traction-mascot-cutout.png"}
+                        else "/public/traction-mascot-cutout.png"}
                     alt=""
                 />
-                <span className="mascot-orbit"></span>
-                <span className="mascot-speech-dots">
-                    <span></span>
-                    <span></span>
-                    <span></span>
-                </span>
                 <span className="mascot-complete-mark">✓</span>
                 <span className="mascot-keyboard">
                     <span></span>
@@ -523,6 +564,20 @@ def:pub Mascot(state: str = "waiting") -> JsxElement {
                 </span>
             </div>
             <span className="mascot-shadow"></span>
+        </div>;
+}
+
+def:pub WorkspaceMascot(pose: str) -> JsxElement {
+    return
+        <div
+            className={"workspace-pose-mascot pose-" + pose}
+            aria-label={"Traction agent " + pose + " pose"}
+        >
+            <img
+                src={"/public/traction-mascot-pose-" + pose + ".png"}
+                alt=""
+                aria-hidden="true"
+            />
         </div>;
 }
 
@@ -717,7 +772,7 @@ def:pub DiscoveryChat(
                             {if phase == "WAITING_FOR_CHOICE"
                             and sourceStep == "github"
                             and not busy {
-                                <Mascot key="github-mascot" state="waiting"/>
+                                <Mascot key="github-mascot" state="speaking"/>
                             }}
                         </span>
                         <div className="chat-bubble agent-bubble prompt-bubble">
@@ -741,7 +796,7 @@ def:pub DiscoveryChat(
                             {if phase == "WAITING_FOR_CHOICE"
                             and sourceStep == "documents"
                             and not busy {
-                                <Mascot key="document-mascot" state="waiting"/>
+                                <Mascot key="document-mascot" state="speaking"/>
                             }}
                         </span>
                         <div className="chat-bubble agent-bubble prompt-bubble">
@@ -818,7 +873,7 @@ def:pub DiscoveryChat(
                     >
                         <span className="conversation-mascot-slot">
                             {if not busy {
-                                <Mascot state="waiting"/>
+                                <Mascot state="speaking"/>
                             }}
                         </span>
                         <div className="chat-bubble agent-bubble prompt-bubble">
@@ -832,7 +887,7 @@ def:pub DiscoveryChat(
                             {if phase == "WAITING_FOR_CHOICE"
                             and sourceStep == "leads"
                             and not busy {
-                                <Mascot key="leads-mascot" state="waiting"/>
+                                <Mascot key="leads-mascot" state="speaking"/>
                             }}
                         </span>
                         <div className="chat-bubble agent-bubble prompt-bubble">
@@ -919,7 +974,7 @@ def:pub DiscoveryChat(
                         className="chat-row agent-row current-agent-row"
                     >
                         <span className="conversation-mascot-slot">
-                            <Mascot state="waiting"/>
+                            <Mascot state="speaking"/>
                         </span>
                         <div className="chat-bubble agent-bubble prompt-bubble">
                             Anything you want me to change before I start searching?
@@ -2031,9 +2086,12 @@ def:pub LeadLibrary(
                             <p className="eyebrow">Reach · Lead profiles</p>
                             <h1 className="editorial">People worth learning from.</h1>
                         </div>
-                        <span className="directory-count">
-                            {str(len(prospects))} profiles
-                        </span>
+                        <div className="workspace-heading-side">
+                            <WorkspaceMascot pose="inspect"/>
+                            <span className="directory-count">
+                                {str(len(prospects))} profiles
+                            </span>
+                        </div>
                     </div>
                     <div className="lead-card-grid">
                         {for prospect in prospects {
@@ -2089,20 +2147,23 @@ def:pub LeadLibrary(
                             <h2>{selected.name}</h2>
                             <p>{selected.role} · {selected.organization}</p>
                         </div>
-                        <div className="profile-header-actions">
-                            <span
-                                className={"profile-status " + status_tone(
-                                    selected.status
-                                )}
-                            >
-                                {selected.status}
-                            </span>
-                            <button
-                                className="button primary profile-draft-cta"
-                                onClick={onOutreach}
-                            >
-                                Draft outreach for {selected.name} →
-                            </button>
+                        <div className="profile-header-side">
+                            <WorkspaceMascot pose="inspect"/>
+                            <div className="profile-header-actions">
+                                <span
+                                    className={"profile-status " + status_tone(
+                                        selected.status
+                                    )}
+                                >
+                                    {selected.status}
+                                </span>
+                                <button
+                                    className="button primary profile-draft-cta"
+                                    onClick={onOutreach}
+                                >
+                                    Draft outreach for {selected.name} →
+                                </button>
+                            </div>
                         </div>
                     </div>
                     <div className="profile-page-tabs" role="tablist">
@@ -2386,9 +2447,12 @@ def:pub OutreachWorkspace(
                         Write from the signal. Send as the founder.
                     </h1>
                 </div>
-                <button className="button" onClick={onTrack}>
-                    Activity tracking →
-                </button>
+                <div className="workspace-heading-side">
+                    <WorkspaceMascot pose="send"/>
+                    <button className="button" onClick={onTrack}>
+                        Activity tracking →
+                    </button>
+                </div>
             </div>
             <div className="identity-strip">
                 <span className="identity-avatar">BZ</span>
@@ -2514,7 +2578,7 @@ def find_prospect_from_list(
 
 def pipeline_status(kind: str, status: str) -> str {
     if kind == "email" {
-        if status == "Booked" {
+        if status in ["Call scheduled", "Booked"] {
             return "Replied";
         }
         if status == "Sent" {
@@ -2525,6 +2589,9 @@ def pipeline_status(kind: str, status: str) -> str {
     if kind == "call" {
         if status == "Booked" {
             return "Completed";
+        }
+        if status == "Call scheduled" {
+            return "Scheduled";
         }
         if status == "Sent" {
             return "Ready after reply";
@@ -2551,7 +2618,10 @@ def:pub ActivityChannelColumn(
         }
     }
     for prospect in prospects {
-        if (kind == "email" and prospect.status in ["Sent", "Booked"])
+        if (
+            kind == "email"
+            and prospect.status in ["Sent", "Call scheduled", "Booked"]
+        )
         or (kind in ["call", "meeting"] and prospect.status == "Booked") {
             completed += 1;
         }
@@ -2585,7 +2655,9 @@ def:pub ActivityChannelColumn(
                             className={"pipeline-state done"
                                 if (
                                     kind == "email"
-                                    and prospect.status in ["Sent", "Booked"]
+                                    and prospect.status in [
+                                        "Sent", "Call scheduled", "Booked"
+                                    ]
                                 )
                                 or (
                                     kind in ["call", "meeting"]
@@ -2593,7 +2665,10 @@ def:pub ActivityChannelColumn(
                                 )
                                 else (
                                     "pipeline-state active"
-                                        if kind == "call" and prospect.status == "Sent"
+                                        if kind == "call"
+                                        and prospect.status in [
+                                            "Sent", "Call scheduled"
+                                        ]
                                         else "pipeline-state"
                                 )}
                         ></span>
@@ -2620,10 +2695,158 @@ def:pub ActivityChannelColumn(
         </article>;
 }
 
+def scheduled_call_time(name: str) -> str {
+    if name == "Priya Shah" {
+        return "Today · 2:40 PM PT";
+    }
+    if name == "Jordan Lee" {
+        return "Tomorrow · 9:15 AM PT";
+    }
+    return "Today · 1:10 PM PT";
+}
+
+def:pub AgentCallOperations(
+    prospects: list[ProspectView],
+    onSchedule: Callable[[], None],
+    onCall: Callable[[str], None],
+    busy: bool
+) -> JsxElement {
+    sent: ProspectView | None = None;
+    scheduled: ProspectView | None = None;
+    booked: ProspectView | None = None;
+    scheduled_id = "";
+    scheduled_name = "";
+    scheduled_time = "";
+    for prospect in prospects {
+        if prospect.status == "Call scheduled" and scheduled is None {
+            scheduled = prospect;
+            scheduled_id = prospect.id;
+            scheduled_name = prospect.name;
+            scheduled_time = scheduled_call_time(prospect.name);
+        } elif prospect.status == "Sent" and sent is None {
+            sent = prospect;
+        } elif prospect.status == "Booked" and booked is None {
+            booked = prospect;
+        }
+    }
+    focus = scheduled if scheduled is not None else (
+        sent if sent is not None else booked
+    );
+    return
+        <div className="agent-call-operations">
+            <div className="call-operations-heading">
+                <div>
+                    <span className="profile-section-label">Agent call queue</span>
+                    <h2>Upcoming and live scheduling calls</h2>
+                </div>
+                <span className="call-automation-badge">Agent books the calls</span>
+            </div>
+            <div className="call-operations-grid">
+                <article className="upcoming-call-card">
+                    <div className="call-card-topline">
+                        <span className="call-card-icon">☎</span>
+                        <span className={"call-state ready"
+                            if scheduled is not None
+                            else (
+                                "call-state complete"
+                                    if booked is not None
+                                    else "call-state waiting"
+                            )}
+                        >
+                            {"Scheduled"
+                                if scheduled is not None
+                                else (
+                                    "Completed"
+                                        if booked is not None
+                                        else "Waiting for reply"
+                                )}
+                        </span>
+                    </div>
+                    <span className="profile-section-label">Upcoming call</span>
+                    {if focus is not None {
+                        <div key={focus.id} className="upcoming-call-person">
+                            <span className="avatar">{focus.initials}</span>
+                            <div>
+                                <h3>{focus.name}</h3>
+                                <p>{focus.role}</p>
+                            </div>
+                        </div>
+                    }}
+                    {if scheduled is not None {
+                        <div key="scheduled-call-detail" className="call-schedule-detail">
+                            <strong>{scheduled_time}</strong>
+                            <span>4-minute scheduling call · Phone</span>
+                            <p>
+                                Reply detected. Traction immediately placed this call on the queue.
+                            </p>
+                        </div>
+                    }}
+                    {if sent is not None and scheduled is None {
+                        <div key="reply-wait" className="call-schedule-detail">
+                            <strong>Monitoring the email thread</strong>
+                            <span>Traction will book the call when a reply arrives.</span>
+                            <button
+                                className="button primary"
+                                onClick={onSchedule}
+                                disabled={busy}
+                            >
+                                {"Booking…"
+                                    if busy
+                                    else "Simulate reply → book call"}
+                            </button>
+                        </div>
+                    }}
+                    {if booked is not None and scheduled is None and sent is None {
+                        <div key="call-complete" className="call-schedule-detail">
+                            <strong>Scheduling call completed</strong>
+                            <span>The transcript is saved in the lead’s Activity tab.</span>
+                        </div>
+                    }}
+                </article>
+                <article className="live-call-monitor-card">
+                    <div className="live-monitor-agent">
+                        <Mascot state={"speaking"
+                            if scheduled is not None
+                            else "waiting"}/>
+                        <span className={"live-monitor-dot active"
+                            if scheduled is not None
+                            else "live-monitor-dot"}
+                        ></span>
+                    </div>
+                    <div>
+                        <span className="profile-section-label">Live call monitor</span>
+                        <h3>
+                            {"Ready to call " + scheduled_name
+                                if scheduled is not None
+                                else (
+                                    "Last call completed"
+                                        if booked is not None
+                                        else "No call is live yet"
+                                )}
+                        </h3>
+                        <p>
+                            Watch both sides speak as a live transcript. Scheduling calls are saved, but never used by Learn.
+                        </p>
+                    </div>
+                    {if scheduled is not None {
+                        <button
+                            className="button primary"
+                            onClick={lambda { onCall(scheduled_id); }}
+                        >
+                            Start & watch live →
+                        </button>
+                    }}
+                </article>
+            </div>
+        </div>;
+}
+
 def:pub ActivityWorkspace(
     workspace: WorkspaceView,
-    onBook: Callable[[], None],
+    onScheduleCall: Callable[[], None],
+    onCall: Callable[[str], None],
     onOutreach: Callable[[], None],
+    onCalendar: Callable[[], None],
     onLearn: Callable[[], None],
     busy: bool
 ) -> JsxElement {
@@ -2633,7 +2856,7 @@ def:pub ActivityWorkspace(
         if prospect.status == "Booked" {
             has_booked = True;
             has_sent = True;
-        } elif prospect.status == "Sent" {
+        } elif prospect.status in ["Sent", "Call scheduled"] {
             has_sent = True;
         }
     }
@@ -2644,11 +2867,23 @@ def:pub ActivityWorkspace(
                     <p className="eyebrow">Reach · Activity tracking</p>
                     <h1 className="editorial">Outreach activity</h1>
                 </div>
-                <div className="activity-total">
-                    <strong>{str(len(workspace.activities))}</strong>
-                    <span>recorded events</span>
+                <div className="workspace-heading-side">
+                    <WorkspaceMascot pose="writing"/>
+                    <div className="activity-total">
+                        <strong>{str(len(workspace.activities))}</strong>
+                        <span>recorded events</span>
+                    </div>
                 </div>
             </div>
+            {if has_sent {
+                <AgentCallOperations
+                    key="agent-call-operations"
+                    prospects={workspace.prospects}
+                    onSchedule={onScheduleCall}
+                    onCall={onCall}
+                    busy={busy}
+                />
+            }}
             <div className="activity-channel-grid">
                 <ActivityChannelColumn
                     kind="email"
@@ -2683,33 +2918,324 @@ def:pub ActivityWorkspace(
                     </button>
                 </div>
             }}
-            {if has_sent and not has_booked {
-                <div key="activity-next" className="next-action-card">
-                    <div>
-                        <span className="eyebrow">Demo next action</span>
-                        <h2>Simulate an interested reply, call, and booking</h2>
-                    </div>
-                    <button className="button primary" onClick={onBook} disabled={busy}>
-                        {"Updating…" if busy else "Run next activity →"}
-                    </button>
-                </div>
-            }}
             {if has_booked {
                 <div
-                    key="activity-to-learn"
+                    key="activity-to-calendar"
                     className="next-action-card completed-next-action"
                 >
                     <div>
                         <span className="eyebrow">Meeting booked</span>
-                        <h2>
-                            The research session is ready when you want to test Learn.
-                        </h2>
+                        <h2>The demo meeting is on both calendars.</h2>
+                        <p>
+                            Open Calendar for the schedule, or continue to Learn after the meeting.
+                        </p>
                     </div>
-                    <button className="button primary" onClick={onLearn}>
-                        Open Learn backlog →
-                    </button>
+                    <div className="next-action-buttons">
+                        <button className="button primary" onClick={onCalendar}>
+                            Open Calendar →
+                        </button>
+                        <button className="button" onClick={onLearn}>
+                            Learn backlog
+                        </button>
+                    </div>
                 </div>
             }}
+        </section>;
+}
+
+def:pub LiveCallWorkspace(
+    workspace: WorkspaceView,
+    prospectId: str,
+    step: int,
+    active: bool,
+    onBack: Callable[[], None],
+    onCalendar: Callable[[], None]
+) -> JsxElement {
+    prospect = find_prospect(workspace, prospectId);
+    prospect_name = "the lead";
+    if prospect is not None {
+        prospect_name = prospect.name;
+    }
+    timer = "00:0" + str(step + 1) if step < 9 else "00:10";
+    return
+        <section className="workspace-section live-call-workspace">
+            <div className="live-call-topbar">
+                <button className="back-link" onClick={onBack} disabled={active}>
+                    ← Activity tracking
+                </button>
+                <div className={"live-call-status on-air" if active else "live-call-status"}>
+                    <span></span>
+                    {"Live · " + timer if active else "Call complete · 04:08"}
+                </div>
+            </div>
+            <div className="live-call-shell">
+                <div className="live-call-people">
+                    <div className="call-agent-portrait">
+                        <Mascot state={"speaking" if active else "completing"}/>
+                        <span>Traction agent</span>
+                        <strong>Calling for Becky</strong>
+                    </div>
+                    <div className="call-connection-line">
+                        <span></span>
+                        <small>Phone · secure line</small>
+                    </div>
+                    {if prospect is not None {
+                        <div key={prospect.id} className="call-participant-portrait">
+                            <span className="avatar">{prospect.initials}</span>
+                            <span>{prospect.name}</span>
+                            <strong>{prospect.role}</strong>
+                        </div>
+                    }}
+                </div>
+                <div className="live-transcript-panel">
+                    <div className="live-transcript-header">
+                        <div>
+                            <span className="profile-section-label">Live transcript</span>
+                            <h1>Scheduling the founder demo</h1>
+                        </div>
+                        <span className="learning-policy excluded">
+                            Scheduling only · Excluded from Learn
+                        </span>
+                    </div>
+                    <div className="live-transcript-thread" aria-live="polite">
+                        {if step >= 1 {
+                            <div key="call-line-1" className="live-transcript-row agent-speaking">
+                                <span>Traction</span>
+                                <p>
+                                    Hi {prospect_name}—this is Traction calling on Becky’s behalf. You replied about a short research chat. Do you have a minute to find a time?
+                                </p>
+                            </div>
+                        }}
+                        {if step >= 2 {
+                            <div key="call-line-2" className="live-transcript-row participant-speaking">
+                                <span>{prospect_name}</span>
+                                <p>Yes. Tuesday morning would work well.</p>
+                            </div>
+                        }}
+                        {if step >= 3 {
+                            <div key="call-line-3" className="live-transcript-row agent-speaking">
+                                <span>Traction</span>
+                                <p>
+                                    Becky has 10:30 AM Pacific open for 25 minutes. Should I book that?
+                                </p>
+                            </div>
+                        }}
+                        {if step >= 4 {
+                            <div key="call-line-4" className="live-transcript-row participant-speaking">
+                                <span>{prospect_name}</span>
+                                <p>10:30 works. Please send me the invite.</p>
+                            </div>
+                        }}
+                        {if step >= 5 {
+                            <div key="call-line-5" className="live-transcript-row agent-speaking">
+                                <span>Traction</span>
+                                <p>
+                                    Done. I’ve added the calendar invite and Zoom link to both calendars. See you Tuesday.
+                                </p>
+                            </div>
+                        }}
+                        {if active and step < 5 {
+                            <div
+                                key="live-typing"
+                                className={"live-transcript-typing participant-speaking"
+                                    if step in [1, 3]
+                                    else "live-transcript-typing agent-speaking"}
+                            >
+                                <span>{prospect_name if step in [1, 3] else "Traction"}</span>
+                                <div className="typing-dots">
+                                    <span></span><span></span><span></span>
+                                </div>
+                            </div>
+                        }}
+                        {if active and step >= 5 {
+                            <div key="booking-typing" className="live-booking-status">
+                                <span className="typing-dots">
+                                    <span></span><span></span><span></span>
+                                </span>
+                                Booking the meeting and syncing calendars…
+                            </div>
+                        }}
+                    </div>
+                    {if not active and step >= 6 {
+                        <div key="call-booked" className="live-call-complete">
+                            <div>
+                                <span className="profile-section-label">Booked</span>
+                                <h2>Tuesday, July 28 · 10:30 AM PT</h2>
+                                <p>25-minute founder demo · Calendar invite and Zoom link sent.</p>
+                            </div>
+                            <div className="next-action-buttons">
+                                <button className="button" onClick={onBack}>
+                                    Back to activity
+                                </button>
+                                <button className="button primary" onClick={onCalendar}>
+                                    View in Calendar →
+                                </button>
+                            </div>
+                        </div>
+                    }}
+                </div>
+            </div>
+        </section>;
+}
+
+def:pub CalendarDay(
+    label: str,
+    date: str,
+    active: bool,
+    prospects: list[ProspectView],
+    onProfile: Callable[[str], None]
+) -> JsxElement {
+    return
+        <div className={"calendar-day active-day" if active else "calendar-day"}>
+            <div className="calendar-day-heading">
+                <span>{label}</span>
+                <strong>{date}</strong>
+            </div>
+            <div className="calendar-slot"></div>
+            <div className="calendar-slot"></div>
+            <div className="calendar-slot"></div>
+            <div className="calendar-slot"></div>
+            {if active {
+                <div key="calendar-events" className="calendar-events-layer">
+                    {for prospect in prospects {
+                        <button
+                            key={prospect.id}
+                            className="calendar-meeting-event"
+                            onClick={lambda { onProfile(prospect.id); }}
+                        >
+                            <span>10:30–10:55</span>
+                            <strong>Founder demo · {prospect.name}</strong>
+                            <small>Zoom · Traction research</small>
+                        </button>
+                    }}
+                </div>
+            }}
+        </div>;
+}
+
+def:pub CalendarWorkspace(
+    workspace: WorkspaceView,
+    notice: str,
+    onActivity: Callable[[], None],
+    onProfile: Callable[[str], None],
+    onSync: Callable[[], None]
+) -> JsxElement {
+    booked: list[ProspectView] = [];
+    for prospect in workspace.prospects {
+        if prospect.status == "Booked" {
+            booked.append(prospect);
+        }
+    }
+    return
+        <section className="workspace-section calendar-workspace">
+            <div className="section-heading split-heading calendar-heading">
+                <div>
+                    <p className="eyebrow">Reach · Calendar</p>
+                    <h1 className="editorial">Founder demo schedule</h1>
+                </div>
+                <div className="workspace-heading-side calendar-heading-side">
+                    <WorkspaceMascot pose="coffee"/>
+                    <div className="calendar-connection-card">
+                        <span className="calendar-provider-icon">31</span>
+                        <div>
+                            <span>Google Calendar</span>
+                            <strong>
+                                {workspace.founder_email}
+                                {" · Connected" if workspace.calendar_connected else ""}
+                            </strong>
+                        </div>
+                        <button className="button small" onClick={onSync}>
+                            {"Synced ✓"
+                                if notice
+                                else (
+                                    "Sync now"
+                                        if workspace.calendar_connected
+                                        else "Connect Google Calendar"
+                                )}
+                        </button>
+                    </div>
+                </div>
+            </div>
+            <div className="calendar-toolbar">
+                <div>
+                    <button className="button small">Today</button>
+                    <button className="calendar-arrow" aria-label="Previous week">←</button>
+                    <button className="calendar-arrow" aria-label="Next week">→</button>
+                    <strong>July 27–31, 2026</strong>
+                </div>
+                <span>{str(len(booked))} booked demo meeting{"s" if len(booked) != 1 else ""}</span>
+            </div>
+            <div className="calendar-layout">
+                <div className="calendar-week">
+                    <div className="calendar-time-column">
+                        <span></span>
+                        <span>9 AM</span>
+                        <span>10 AM</span>
+                        <span>11 AM</span>
+                        <span>12 PM</span>
+                    </div>
+                    <CalendarDay
+                        label="Mon" date="27" active={False}
+                        prospects={booked} onProfile={onProfile}
+                    />
+                    <CalendarDay
+                        label="Tue" date="28" active={True}
+                        prospects={booked} onProfile={onProfile}
+                    />
+                    <CalendarDay
+                        label="Wed" date="29" active={False}
+                        prospects={booked} onProfile={onProfile}
+                    />
+                    <CalendarDay
+                        label="Thu" date="30" active={False}
+                        prospects={booked} onProfile={onProfile}
+                    />
+                    <CalendarDay
+                        label="Fri" date="31" active={False}
+                        prospects={booked} onProfile={onProfile}
+                    />
+                    {if not booked {
+                        <div key="calendar-empty" className="calendar-empty-state">
+                            <span>○</span>
+                            <strong>No demo meetings booked yet</strong>
+                            <p>Confirmed calls will appear here automatically.</p>
+                        </div>
+                    }}
+                </div>
+                <aside className="calendar-agenda">
+                    <div className="calendar-agenda-heading">
+                        <span className="profile-section-label">Upcoming</span>
+                        <h2>Demo meetings</h2>
+                    </div>
+                    {if not booked {
+                        <div key="agenda-empty" className="agenda-empty">
+                            <p>Traction adds meetings here when a scheduling call confirms a time.</p>
+                            <button className="button" onClick={onActivity}>
+                                Open activity tracking →
+                            </button>
+                        </div>
+                    }}
+                    {for prospect in booked {
+                        <article key={prospect.id} className="agenda-meeting-card">
+                            <div className="agenda-date">
+                                <span>JUL</span>
+                                <strong>28</strong>
+                            </div>
+                            <div>
+                                <span>Tuesday · 10:30 AM PT</span>
+                                <h3>Founder demo with {prospect.name}</h3>
+                                <p>25 minutes · Zoom · Both calendars confirmed</p>
+                                <button
+                                    className="profile-link-button"
+                                    onClick={lambda { onProfile(prospect.id); }}
+                                >
+                                    Open lead profile →
+                                </button>
+                            </div>
+                        </article>
+                    }}
+                </aside>
+            </div>
         </section>;
 }
 
@@ -2740,7 +3266,10 @@ def:pub LearningWorkspace(
                         Turn the conversation into a better next search.
                     </h1>
                 </div>
-                <Mascot state={"completing" if workspace.insights else "waiting"}/>
+                <div className="workspace-heading-side">
+                    <WorkspaceMascot pose={"writing"
+                        if workspace.insights else "inspect"}/>
+                </div>
             </div>
             {if not has_booked {
                 <div key="learn-waiting" className="learn-waiting-card">

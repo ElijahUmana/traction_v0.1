@@ -62,8 +62,14 @@ test "evidence loop reaches an updated hypothesis" {
     assert sent.activities[0].identity == "Becky Zhu <becky@traction.ai>";
     assert sent.activities[0].is_demo;
 
+    call_scheduled = schedule_demo_call(target_id);
+    assert call_scheduled.prospects[0].status == "Call scheduled";
+    assert "Scheduled" in [
+        activity.state for activity in call_scheduled.activities
+    ];
+
     booked = schedule_demo_meeting(target_id);
-    assert len(booked.activities) == 5;
+    assert len(booked.activities) == 6;
     assert "Gmail" in [activity.channel for activity in booked.activities];
     assert "Phone" in [activity.channel for activity in booked.activities];
     assert "Google Calendar" in [activity.channel for activity in booked.activities];

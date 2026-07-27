@@ -366,13 +366,80 @@ impl TractionApp.skip_draft(_e: MouseEvent) -> None {
     notice = "Skipped. No external action was taken.";
 }
 
+impl TractionApp.schedule_agent_call -> None {
+    if workspace is None {
+        return;
+    }
+    target_id = "";
+    for prospect in workspace.prospects {
+        if prospect.status == "Sent" and not target_id {
+            target_id = prospect.id;
+        }
+    }
+    if not target_id {
+        return;
+    }
+    busy = True;
+    notice = "";
+    await demo_wait(650);
+    next_workspace = await schedule_demo_call(target_id);
+    apply_workspace(next_workspace);
+    selected_prospect_id = target_id;
+    live_call_prospect_id = target_id;
+    busy = False;
+}
+
+impl TractionApp.open_live_call(prospect_id: str) -> None {
+    if workspace is None or not prospect_id {
+        return;
+    }
+    selected = find_prospect(workspace, prospect_id);
+    if selected is None {
+        return;
+    }
+    live_call_prospect_id = prospect_id;
+    live_call_step = 0;
+    live_call_active = True;
+    notice = "";
+    busy = True;
+    phase = "LIVE_AGENT_CALL";
+    if selected.status == "Sent" {
+        next_workspace = await schedule_demo_call(prospect_id);
+        apply_workspace(next_workspace);
+    }
+    await demo_wait(550);
+    live_call_step = 1;
+    await demo_wait(800);
+    live_call_step = 2;
+    await demo_wait(800);
+    live_call_step = 3;
+    await demo_wait(800);
+    live_call_step = 4;
+    await demo_wait(800);
+    live_call_step = 5;
+    await demo_wait(850);
+    next_workspace = await schedule_demo_meeting(prospect_id);
+    apply_workspace(next_workspace);
+    selected_prospect_id = prospect_id;
+    live_call_step = 6;
+    live_call_active = False;
+    busy = False;
+}
+
+impl TractionApp.close_live_call -> None {
+    if live_call_active {
+        return;
+    }
+    phase = "TRACKING_EXTERNAL_ACTIVITY";
+}
+
 impl TractionApp.book_demo_meeting -> None {
     if workspace is None {
         return;
     }
     target_id = "";
     for prospect in workspace.prospects {
-        if prospect.status == "Sent" {
+        if prospect.status in ["Call scheduled", "Sent"] and not target_id {
             target_id = prospect.id;
         }
     }
@@ -482,10 +549,23 @@ impl TractionApp.set_profile_tab(tab: str) -> None {
     profile_tab = tab;
 }
 
+impl TractionApp.go_calendar -> None {
+    calendar_notice = "";
+    phase = "CALENDAR_WORKSPACE";
+}
+
+impl TractionApp.refresh_calendar -> None {
+    calendar_notice = "Google Calendar is connected and up to date.";
+}
+
 impl TractionApp.go_home(_e: MouseEvent) -> None {
     phase = "EMPTY";
     search_progress = 0;
     notice = "";
+    calendar_notice = "";
+    live_call_prospect_id = "";
+    live_call_step = 0;
+    live_call_active = False;
 }
 
 impl TractionApp.rerun -> None {
@@ -519,6 +599,10 @@ impl TractionApp.rerun -> None {
     profile_tab = "overview";
     draft_text = "";
     notice = "";
+    live_call_prospect_id = "";
+    live_call_step = 0;
+    live_call_active = False;
+    calendar_notice = "";
     busy = False;
     phase = "EMPTY";
 }
