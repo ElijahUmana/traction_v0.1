@@ -182,7 +182,7 @@ def age_in_days(meta: str) -> int;
 def founder_of(lane: Lane) -> Founder | None;
 
 
-walker:pub LaneW {
+walker LaneW {
     """Deep-reads the one warm lead. Guaranteed-yield: dry here is a failure."""
 
     has context_id: str = "";
