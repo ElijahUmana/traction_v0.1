@@ -507,6 +507,42 @@ the seed has finished and nothing else is live.
 If you need to work in parallel, take a separate checkout — the store is
 per-directory, so different working copies are isolated.
 
+### The isolated checkout is the only trustworthy environment — and it also fixes the server
+
+```bash
+git clone /Users/elijahumana/jachacks-traction /tmp/x
+cp /Users/elijahumana/jachacks-traction/.env /tmp/x/
+cp /Users/elijahumana/jachacks-traction/.linkedin_cookies*.json /tmp/x/   # if scraping
+cd /tmp/x && set -a && . ./.env && set +a
+unset ANTHROPIC_BASE_URL ANTHROPIC_CUSTOM_HEADERS ANTHROPIC_AUTH_TOKEN
+rm -rf .jac
+tail -f /dev/null | jac start main.jac --no-client --port 8123   # distinct port
+```
+
+**Measured, same code and same config, only the contention removed — 12 requests
+over 6 rounds:**
+```
+round 1: graph_health 200 {"founders":0,"runs":0,"lanes":0}   walker 200 ok
+round 6: graph_health 200 {"founders":1,"runs":5,"lanes":20}  walker 200 ok
+```
+Zero `_lock` errors, zero 500s, and the graph moves correctly every round. In the
+shared directory the same sequence dies permanently with
+`'JacScaleUserManager' object has no attribute '_lock'`.
+
+**The two faults compose:** contention corrupts the guest root → the runtime calls
+`reset_root` to heal → `reset_root` needs `_lock`, which `JacScaleUserManager.postinit`
+never created → permanently unrecoverable. Contention is the trigger; the missing
+`_lock` is why it never recovers. This is also why a restart preserving `.jac/data`
+stays broken while `--clean` fixes it.
+
+Notes that cost real time:
+- `tail -f /dev/null | jac start` is required. `< /dev/null` lets it exit immediately,
+  and **`sleep infinity` does not exist on macOS** (GNU extension) — the pipe closes
+  and the server dies on launch.
+- A fresh checkout takes **~120 s** to start; it is compiling the project. Don't
+  declare it dead early.
+- Use a distinct `--port` so a stray server elsewhere can't shadow you.
+
 ## 9. Stale state
 
 `jac clean --all --force` (or `rm -rf .jac/`) when you see
