@@ -95,6 +95,52 @@ data_dir_holders() {
   printf '%s\n' $pids | sort -u | grep -v '^$' | grep -vx "$exclude" || true
 }
 
+# EVERY process match below is flag-agnostic ON PURPOSE.
+#
+# main.jac dropped `--no-client` when it started serving Becky's web client from
+# the same process (its docstring: "two processes cannot share the anchor
+# store"). Every pkill/pgrep here used to hard-code `--no-client`, so the moment
+# the launch line changed they would all have MISSED the running server: stop
+# would silently do nothing, the lockfile would record nothing, the liveness
+# check would report "died at launch" for a healthy server - and the restart
+# would start a SECOND process against the same .jac/data. That is the exact
+# corruption this script exists to prevent, introduced by a flag change.
+#
+# So: never match on optional flags. Identify the server by the directory it is
+# serving (anchor_store.db resolves relative to CWD, so CWD is what owns a data
+# dir) and by the port it holds.
+server_pids() {
+  local pid cwd here
+  here="$(pwd -P)"
+  for pid in $(pgrep -f 'jac start' 2>/dev/null || true); do
+    cwd="$(lsof -a -p "$pid" -d cwd -Fn 2>/dev/null | sed -n 's/^n//p' | head -1)"
+    [ "$cwd" = "$here" ] && echo "$pid"
+  done
+  true
+}
+
+# The pid actually bound to our port, whatever flags it was started with.
+port_pids() { lsof -ti tcp:"$PORT" 2>/dev/null || true; }
+
+# server_pids() deliberately includes the `sh -c "tail -f /dev/null | jac ..."`
+# wrapper, because stopping the server means stopping that too. But `tail -f`
+# keeps that wrapper alive after jac exits, which makes it USELESS as a liveness
+# signal: a jac that dies instantly on a compile error leaves the wrapper
+# running, so "is anything still there?" answers yes forever. Measured: a build
+# that failed in 2s was reported as "still booting" for the full 600s ceiling.
+# Liveness therefore asks specifically for a real jac process.
+jac_proc_pids() {
+  local pid cmd
+  for pid in $(server_pids); do
+    cmd="$(ps -o command= -p "$pid" 2>/dev/null)"
+    case "$cmd" in
+      *"tail -f /dev/null"*) : ;;          # the wrapper, not the server
+      *jac*start*) echo "$pid" ;;
+    esac
+  done
+  true
+}
+
 describe_pids() {
   local pid
   for pid in $@; do
@@ -119,7 +165,8 @@ if [ -f "$LOCK" ]; then
   fi
 fi
 # and whatever is on our port, however it got there
-pkill -f "jac start main.jac --no-client -p $PORT" 2>/dev/null || true
+# shellcheck disable=SC2046
+kill $(server_pids) $(port_pids) 2>/dev/null || true
 lsof -ti tcp:"$PORT" 2>/dev/null | xargs -r kill 2>/dev/null || true
 
 for _ in $(seq 1 30); do
@@ -128,7 +175,7 @@ for _ in $(seq 1 30); do
 done
 if lsof -ti tcp:"$PORT" >/dev/null 2>&1; then
   echo "    still bound after SIGTERM - sending SIGKILL"
-  pkill -9 -f "jac start main.jac --no-client -p $PORT" 2>/dev/null || true
+  pkill -9 -f "jac start main.jac -p $PORT" 2>/dev/null || true
   lsof -ti tcp:"$PORT" 2>/dev/null | xargs -r kill -9 2>/dev/null || true
   sleep 2
 fi
@@ -250,7 +297,7 @@ start_server() {
   # unset. It is nothing to do with why _lock is MISSING (that is unconditional,
   # see the header) - it is about what makes the store DIVERGE in the first
   # place. Unsetting it costs nothing here; the app never uses Redis.
-  nohup sh -c "unset REDIS_URL; tail -f /dev/null | jac start main.jac --no-client -p $PORT" \
+  nohup sh -c "unset REDIS_URL; tail -f /dev/null | jac start main.jac -p $PORT" \
     > "$LOG" 2>&1 &
 
   # READINESS IS A REAL ENDPOINT, NEVER /healthz.
@@ -260,22 +307,23 @@ start_server() {
   # founders -> Runs -> HasLane, so a 200 from it proves the persisted graph is
   # actually readable - which is the property we care about.
   #
-  # 300s, not 90s: `jac clean --all` throws away the compiled JIR, so the next
-  # boot recompiles the whole project before it binds. Timing out mid-compile and
-  # printing "server never became healthy" is how you end up wiping a data dir
-  # that was never the problem.
+  # 600s, not 90s: `jac clean --all` throws away the compiled JIR, so the next
+  # boot recompiles the whole project before it binds - and now that main.jac
+  # serves the web client too, that boot also bundles the client. Timing out
+  # mid-compile and printing "server never became healthy" is how you end up
+  # wiping a data dir that was never the problem.
   # Count WALL SECONDS, not loop iterations. Each pass costs the curl timeout
   # plus the sleep, so a 300-iteration loop is really up to 30 minutes and every
   # "still booting (30s)" line understates the truth by 6x. Deadline arithmetic
   # on SECONDS is the only honest way to say how long we have waited.
-  local code bound=0 deadline=$((SECONDS + 300)) next=$((SECONDS + 30))
+  local code bound=0 deadline=$((SECONDS + 600)) next=$((SECONDS + 30))
   while [ "$SECONDS" -lt "$deadline" ]; do
     code="$(curl -s -m 3 -o /dev/null -w '%{http_code}' -X POST \
       "http://127.0.0.1:$PORT/function/graph_health" \
       -H 'Content-Type: application/json' -d '{}' 2>/dev/null || true)"
     code="${code:-000}"
     if [ "$code" = "200" ]; then
-      echo "    serving real traffic after $((SECONDS - deadline + 300))s (graph_health 200)"
+      echo "    serving real traffic after $((SECONDS - deadline + 600))s (graph_health 200)"
       return 0
     fi
     if [ "$code" != "000" ] && [ "$bound" = "0" ]; then
@@ -285,7 +333,16 @@ start_server() {
     # Do not sit out the full 300s waiting for a process that is already gone.
     # A `jac start` that dies at launch leaves an EMPTY log and a silent wait,
     # which reads exactly like a slow compile - that cost real time to diagnose.
-    if ! pgrep -f "jac start main.jac --no-client -p $PORT" >/dev/null 2>&1; then
+    # A hard load error appears in the log within seconds and is terminal.
+    # Sitting out a 600s compile ceiling for a build that already failed is the
+    # most expensive thing this loop can do - and it reads as "still compiling".
+    if grep -qE "Error loading|No module named|Traceback \(most recent" "$LOG" 2>/dev/null; then
+      echo "    !! the build FAILED - this is not a slow compile:"
+      grep -E "Error loading|No module named" "$LOG" 2>/dev/null | head -3 | sed 's/^/       /'
+      echo "       full log: $LOG"
+      return 1
+    fi
+    if [ -z "$(jac_proc_pids)" ] && [ -z "$(port_pids)" ]; then
       echo "    !! the jac process is gone - it died at launch, it is not compiling"
       echo "       (log is $LOG, $(wc -c < "$LOG" 2>/dev/null || echo 0) bytes)"
       tail -15 "$LOG" 2>/dev/null | sed 's/^/       /'
@@ -293,11 +350,11 @@ start_server() {
     fi
     if [ "$SECONDS" -ge "$next" ]; then
       next=$((SECONDS + 30))
-      echo "    still booting ($((SECONDS - deadline + 300))s elapsed) - a first boot in a fresh dir compiles the whole project"
+      echo "    still booting ($((SECONDS - deadline + 600))s elapsed) - a first boot in a fresh dir compiles the whole project"
     fi
     sleep 1
   done
-  echo "    gave up after 300s (last graph_health: ${code:-none})"
+  echo "    gave up after 600s (last graph_health: ${code:-none})"
   return 1
 }
 
@@ -350,7 +407,7 @@ fi
 
 # Record who owns this data dir, so the next restart stops exactly this process
 # and no one else's. Above .jac/data so a `rm -rf .jac/data` cannot orphan it.
-SERVER_PID="$(pgrep -f "jac start main.jac --no-client -p $PORT" | head -1)"
+SERVER_PID="$(port_pids | head -1)"; [ -n "$SERVER_PID" ] || SERVER_PID="$(jac_proc_pids | head -1)"
 mkdir -p "$(dirname "$LOCK")"
 { echo "pid=${SERVER_PID:-unknown}"; echo "port=$PORT"; echo "dir=$PWD"; } > "$LOCK"
 echo "==> holding $LOCK (pid ${SERVER_PID:-unknown}, port $PORT)"
@@ -401,7 +458,7 @@ else
   if grep -q "no attribute '_lock'" "$LOG"; then
     echo "    -> _lock AttributeError in the log: divergent guest root got through"
     echo "       the preflight. Repairing and restarting ONCE."
-    pkill -9 -f "jac start main.jac --no-client -p $PORT" 2>/dev/null || true
+    pkill -9 -f "jac start main.jac -p $PORT" 2>/dev/null || true
     lsof -ti tcp:"$PORT" 2>/dev/null | xargs -r kill -9 2>/dev/null || true
     # WAIT for it to actually be gone. `sleep 3` and hope is what let a repair
     # race a still-live server; repair_guest_root now refuses in that case, but
@@ -417,7 +474,7 @@ else
     if ! start_server; then
       echo "!! server never became healthy after repair - see $LOG"; tail -30 "$LOG"; exit 1
     fi
-    SERVER_PID="$(pgrep -f "jac start main.jac --no-client -p $PORT" | head -1)"
+    SERVER_PID="$(port_pids | head -1)"; [ -n "$SERVER_PID" ] || SERVER_PID="$(jac_proc_pids | head -1)"
     { echo "pid=${SERVER_PID:-unknown}"; echo "port=$PORT"; echo "dir=$PWD"; } > "$LOCK"
     if smoke; then
       echo "    12/12 OK after repair"
@@ -430,6 +487,22 @@ else
     echo "!! failures are not the _lock bug - read $LOG before demoing."
     tail -30 "$LOG"; exit 1
   fi
+fi
+
+# The web client is now served by this same process via `[serve]
+# base_route_app = "app"`. If that binding is missing the API is perfectly
+# healthy and `/` just 404s - an entirely invisible way to ship a demo with no
+# UI. Cheap to check, so check it.
+echo "==> web client at /"
+ROOT="$(curl -s -m 10 -o /dev/null -w '%{http_code}' "http://127.0.0.1:$PORT/" 2>/dev/null || true)"
+ROOT="${ROOT:-000}"
+if [ "$ROOT" = "200" ]; then
+  echo "    / -> 200 (client mounted)"
+else
+  echo "    !! / -> $ROOT - the web client is NOT mounted."
+  echo "       Check [serve] base_route_app = \"app\" in jac.toml and that the"
+  echo "       launch line does NOT pass --no-client (that flag suppresses it)."
+  echo "       The API is fine; the UI is missing. Not fatal, but it is the demo."
 fi
 
 echo "==> websocket routes registered:"
