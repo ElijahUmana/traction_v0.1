@@ -213,35 +213,40 @@ start_server() {
   # boot recompiles the whole project before it binds. Timing out mid-compile and
   # printing "server never became healthy" is how you end up wiping a data dir
   # that was never the problem.
-  local i code bound=0
-  for i in $(seq 1 300); do
-    code="$(curl -s -m 5 -o /dev/null -w '%{http_code}' -X POST \
+  # Count WALL SECONDS, not loop iterations. Each pass costs the curl timeout
+  # plus the sleep, so a 300-iteration loop is really up to 30 minutes and every
+  # "still booting (30s)" line understates the truth by 6x. Deadline arithmetic
+  # on SECONDS is the only honest way to say how long we have waited.
+  local code bound=0 deadline=$((SECONDS + 300)) next=$((SECONDS + 30))
+  while [ "$SECONDS" -lt "$deadline" ]; do
+    code="$(curl -s -m 3 -o /dev/null -w '%{http_code}' -X POST \
       "http://127.0.0.1:$PORT/function/graph_health" \
       -H 'Content-Type: application/json' -d '{}' 2>/dev/null || true)"
     code="${code:-000}"
     if [ "$code" = "200" ]; then
-      echo "    serving real traffic after ${i}s (graph_health 200)"
+      echo "    serving real traffic after $((SECONDS - deadline + 300))s (graph_health 200)"
       return 0
     fi
     if [ "$code" != "000" ] && [ "$bound" = "0" ]; then
       bound=1
-      echo "    port bound at ${i}s, but graph_health says $code - still waiting for a REAL 200"
+      echo "    port bound, but graph_health says $code - still waiting for a REAL 200"
     fi
     # Do not sit out the full 300s waiting for a process that is already gone.
     # A `jac start` that dies at launch leaves an EMPTY log and a silent wait,
     # which reads exactly like a slow compile - that cost real time to diagnose.
     if ! pgrep -f "jac start main.jac --no-client -p $PORT" >/dev/null 2>&1; then
-      echo "    !! the jac process is gone after ${i}s - it died at launch, it is not compiling"
+      echo "    !! the jac process is gone - it died at launch, it is not compiling"
       echo "       (log is $LOG, $(wc -c < "$LOG" 2>/dev/null || echo 0) bytes)"
       tail -15 "$LOG" 2>/dev/null | sed 's/^/       /'
       return 1
     fi
-    if [ $((i % 30)) -eq 0 ]; then
-      echo "    still booting (${i}s) - a post-\`jac clean\` boot recompiles everything"
+    if [ "$SECONDS" -ge "$next" ]; then
+      next=$((SECONDS + 30))
+      echo "    still booting ($((SECONDS - deadline + 300))s elapsed) - a first boot in a fresh dir compiles the whole project"
     fi
     sleep 1
   done
-  echo "    gave up after ${i}s (last graph_health: ${code:-none})"
+  echo "    gave up after 300s (last graph_health: ${code:-none})"
   return 1
 }
 

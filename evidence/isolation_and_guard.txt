@@ -1,0 +1,104 @@
+ISOLATION + GUARD: ops/serve.sh and the data-dir-in-use refusal
+===============================================================
+Measured 2026-07-26, jac 0.34.7 / macOS arm64. Instance: /tmp/traction-demo :8877.
+Companion to evidence/guest_root_lock_fix.txt, which covers the _lock mechanism.
+
+WHY A DIRECTORY AND NOT AN ENV VAR
+  main.db          honours JAC_DATA_PATH   runtimelib/impl/server.impl.jac:16
+  users.db         honours JAC_DATA_PATH   scale/identity/impl/user_manager.impl.jac:37
+  anchor_store.db  IGNORES it - hard-coded '.jac/data/anchor_store.db',
+                   scale/config/impl/config_loader.impl.jac:218, no env override
+  Setting JAC_DATA_PATH moves users.db and not the anchor store, so the guest
+  root is recorded in one file and absent from the other - hand-building the
+  divergence that bricks the server. anchor_store.db resolves relative to CWD,
+  so only a separate working DIRECTORY isolates anything.
+
+A. ops/serve.sh brings up an isolated instance
+==> syncing code /Users/elijahumana/jachacks-traction -> /tmp/traction-demo
+    code synced; /tmp/traction-demo/.jac left untouched
+==> handing off to the instance's own ops/restart.sh (port 8877)
+==> stopping this directory's server
+    port 8877 is free
+==> guest-root preflight
+    consistent (or nothing to check yet)
+==> starting
+    loading .env (parsed, never evaluated)
+    still booting (31s elapsed) - a first boot in a fresh dir compiles the whole project
+    still booting (63s elapsed) - a first boot in a fresh dir compiles the whole project
+    still booting (93s elapsed) - a first boot in a fresh dir compiles the whole project
+    still booting (124s elapsed) - a first boot in a fresh dir compiles the whole project
+    serving real traffic after 126s (graph_health 200)
+==> holding .jac/serving.lock (pid 51893, port 8877)
+==> warmup (first anonymous request also initialises the guest root)
+    warmup: 200
+==> smoke gate (12 anonymous walker/function POSTs)
+    12/12 OK
+==> websocket routes registered:
+    INFO - Registered WebSocket walker endpoint: /ws/walker/LiveFeed (+ legacy /ws/LiveFeed)
+==> ready on http://127.0.0.1:8877
+    data dir : /tmp/traction-demo/.jac/data   (anchor_store.db resolves relative to CWD -
+               a dedicated data dir means a dedicated DIRECTORY, never
+               JAC_DATA_PATH, which moves users.db but not the anchor store)
+    lock     : /tmp/traction-demo/.jac/serving.lock
+    NOTHING else may run jac in this directory while this server is up.
+
+================================================================================
+DEMO INSTANCE READY
+  url      : http://127.0.0.1:8877
+  directory: /tmp/traction-demo
+  data     : /tmp/traction-demo/.jac/data
+  log      : /tmp/traction-8877.log
+
+  Nobody else's `jac run`, `jac test` or stray server touches this data dir,
+  and ops/restart.sh will refuse to start here if anything else opens it.
+
+  Check it with:  ops/serve.sh --status --port 8877 --dir /tmp/traction-demo
+  Never with:     curl .../healthz   (returns 200 while every endpoint 500s)
+================================================================================
+serve.sh exit=0
+probe(60): OK=60 FAIL=0
+body: {"ok":true,"type":"response","data":{"result":{"founders":0,"runs":0,"lanes":0,"probes":0,"reasoning":0,"prospects":0,"c
+_lock errors across the whole run: 0
+anchors: 4
+lockfile: pid=51893 port=8877 dir=/tmp/traction-demo 
+
+
+B. THE GUARD - a second process opens the data dir; restart.sh must refuse
+   (captured in the first pass; a python3 process held
+    .jac/data/anchor_store.db open, standing in for a `jac run`)
+=== C: the guard - a second process opens the data dir, restart.sh must REFUSE ===
+holder pid 46216 has .jac/data/anchor_store.db open
+==> stopping this directory's server
+    stopping recorded server pid 43605
+    port 8877 is free
+!! REFUSING TO START. Another process still has .jac/data open:
+       pid 46216: python3 -c \012import time\012f=open('.jac/data/anchor_store.db','r')\012time.sleep(45)\012
+    Two processes on one SQLite anchor store is what corrupts the guest
+    root and produces the permanent _lock 500s. Stop them, or serve this
+    checkout from its own directory with: ops/serve.sh
+restart.sh exit=1  (expect 1 = refused)
+
+   The guard asks lsof who has the store open rather than matching process
+   names, which is why it catches `jac run` and `jac test` - the actual
+   contention source - and not merely a stray `jac start`.
+
+C. FIRST PASS, same instance, before the guard test: probe(60) OK=60 FAIL=0,
+   0 _lock errors. Two independent 60-request runs, both clean.
+
+D. WHAT KILLED THE FIRST ATTEMPT AT (A) - worth recording
+   The jac process died at 60s with "Killed: 9" and an 81-byte log, and the two
+   teammate servers on :8000 and :8123 died in the same instant. Nothing in
+   ops/ sends a global SIGKILL any more; something else on the machine ran
+   `pkill -9 -f "jac start"`. That is precisely the cross-operator stomping the
+   scoped kill was introduced to stop, demonstrated live.
+
+   It also exercised the new fail-fast path, which reported
+     "!! the jac process is gone - it died at launch, it is not compiling
+        (log is /tmp/traction-8877.log, 81 bytes)"
+   instead of sitting out the remaining 240s looking like a slow compile.
+
+E. HONEST WALL-CLOCK
+   Boot reported 31s / 63s / 93s / 124s and served at 126s. The previous loop
+   counted iterations, not seconds, and each pass cost a curl timeout plus a
+   sleep - so its "300s" ceiling was really up to 30 minutes and every progress
+   line understated elapsed time about 6x.
