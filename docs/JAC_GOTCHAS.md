@@ -621,6 +621,23 @@ spontaneously in a "clean" environment.
 that isolates a Jac server is its own DIRECTORY.** That is why the isolated
 checkout above works, and it is what `ops/serve.sh` automates.
 
+### 8e-ii-b. The WebSocket also survives a `_lock` event — so the dashboard shows nothing wrong
+
+During a `_lock` failure the socket still connects, still accepts frames, and
+still broadcasts to every connected client, while every HTTP endpoint 500s.
+Combined with `/healthz` staying green, the dashboard's whole liveness surface
+looks healthy: socket up, health up, panels frozen.
+
+That is indistinguishable from "nobody is running the pump" — which is a real
+and separate condition (`docs/FRONTEND_INTEGRATION.md` §4.4: exactly one client
+must poll `feed_since` and forward batches into the socket). So the same symptom
+has two very different causes, and the socket cannot tell you which.
+
+**The only way to tell them apart is to POST a function endpoint yourself.**
+`ops/serve.sh --status` does exactly this and prints `graph_health` next to
+`healthz`. If `graph_health` 500s it is the `_lock` failure; if it returns 200
+while panels are frozen, the pump is missing.
+
 ### 8e-ii. `/healthz` returns 200 for the entire duration of the failure
 
 Caught live by FRONTEND with timestamps: the server served ~10 requests, another
