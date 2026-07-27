@@ -29,7 +29,10 @@ import from outreach {
     founder_context, address_as
 }
 import from svc { vapi_base, vapi_headers, http_json, cfg, cfg_required, public_url_for, founder_email }
-import from gcal { create_meeting }
+import from gcal {
+    create_meeting, check_availability, now_local, demo_timezone, default_meeting_minutes
+}
+import from timeparse { resolve_spoken_time, validate_iso_hint, speak_datetime }
 
 import from jaclang.byllm.lib { Model }
 
@@ -218,10 +221,21 @@ def midcall_tools -> list[dict] {
                         "start_time": {
                             "type": "string",
                             "description": (
-                                "When the meeting should start, as an ISO 8601 datetime "
-                                + "with a timezone offset. Resolve relative phrasing like "
-                                + "'tomorrow at 2' against the current date before calling. "
-                                + "Leave empty only if they said as soon as possible."
+                                "Your best attempt at the start time as an ISO 8601 "
+                                + "datetime with a timezone offset. If you are not "
+                                + "certain of today's date, leave this empty and fill "
+                                + "in spoken_time only - the server resolves it against "
+                                + "the real clock."
+                            )
+                        },
+                        "spoken_time": {
+                            "type": "string",
+                            "description": (
+                                "REQUIRED. The time exactly as the person said it, in "
+                                + "their own words - 'thursday at 2', 'tomorrow "
+                                + "afternoon', '3:30 my time'. Do not reword it, do not "
+                                + "convert it, do not resolve it. This is the server's "
+                                + "authoritative record of what was actually asked for."
                             )
                         },
                         "duration_minutes": {
@@ -229,21 +243,26 @@ def midcall_tools -> list[dict] {
                             "description": "Meeting length in minutes. Default 30."
                         }
                     },
-                    "required": ["start_time"]
+                    "required": ["spoken_time"]
                 }
             },
+            # There is deliberately NO static request-complete message here.
+            # Vapi speaks a static request-complete INSTEAD of the tool result,
+            # so a fixed string makes the agent claim "invite sent" no matter
+            # what actually happened - including when the tool 500s. That is
+            # exactly what was heard on call 019fa100. Leaving it out forces the
+            # model to narrate the returned line, which carries the real date,
+            # time and timezone the human needs in order to catch an error.
             "messages": [
-                {"type": "request-start", "content": "Booking that now."},
-                {
-                    "type": "request-complete",
-                    "content": (
-                        "Done. I have just sent the calendar invite to your email with a "
-                        + "Google Meet link, it should be on your phone already."
-                    )
-                },
+                {"type": "request-start", "content": "Let me get that booked."},
                 {
                     "type": "request-failed",
-                    "content": "I could not get that booked just now, I will follow up by email."
+                    "role": "system",
+                    "content": (
+                        "The booking did not go through. Tell them plainly that it did "
+                        + "not work - never imply an invite was sent - say briefly why "
+                        + "based on the error, and offer to follow up by email."
+                    )
                 }
             ],
             "server": {"url": public_url_for("/walker/BookInterview"), "timeoutSeconds": 25}
@@ -407,6 +426,33 @@ async walker:pub ScheduleCall(ProspectLookup) {
 }
 
 
+"""The timezone a spoken time should be interpreted in for this prospect.
+
+We do NOT guess. Nothing on the Prospect node records where anyone is - there
+is no location field anywhere in the schema - so reasoning "Becky is at Oracle
+therefore Pacific" would be a three-hour error waiting to happen. Unless
+PROSPECT_TIMEZONE is set deliberately, this returns empty, meaning the spoken
+time is read in the founder's calendar zone and the agent SAYS that zone out
+loud. Naming the zone is what lets the human correct it while still on the
+phone; an inferred zone that is never spoken is the failure we are avoiding.
+"""
+def prospect_timezone(target: Prospect) -> str {
+    return cfg("PROSPECT_TIMEZONE", "");
+}
+
+
+"""Re-derive the spoken sentence from what Google stored, not what we sent.
+
+`create_meeting` returns the start Google actually wrote. Speaking that back,
+rather than echoing the request, is the control that catches a slot Google
+moved or a timezone reinterpreted on the way out.
+"""
+def confirmed_slot(stored_iso: str) -> str {
+    moment = datetime.fromisoformat(stored_iso);
+    return speak_datetime(moment, demo_timezone());
+}
+
+
 """Locate a CallSession by its Vapi call id.
 
 Checks both the production shape (hung off a Prospect by the Called edge) and a
@@ -539,11 +585,13 @@ async walker:pub BookInterview {
     has call_id: str = "";
     has prospect_id: str = "";
     has start_time: str = "";
+    has spoken_time: str = "";
     has duration_minutes: int = 0;
     has reports: list[dict] = [];
 
     async can book with Root entry {
         start = self.start_time;
+        spoken = self.spoken_time;
         minutes = self.duration_minutes;
         tool_call_id = "";
         vapi_call = self.call_id;
@@ -559,11 +607,23 @@ async walker:pub BookInterview {
                 if not start {
                     start = str(args.get("start_time", ""));
                 }
+                if not spoken {
+                    spoken = str(args.get("spoken_time", ""));
+                }
                 if minutes <= 0 {
                     minutes = int(float(args.get("duration_minutes", 0) or 0));
                 }
             }
         }
+
+        # Log what ARRIVED, before anything interprets it. Without this line the
+        # only way to tell a fallback from a real parse was to notice that a
+        # booked start carried microseconds - which is how the 17:58:27.383985
+        # event on Becky's calendar was eventually diagnosed. Never again.
+        print(
+            f"[BookInterview] raw start_time={start!r} spoken_time={spoken!r} "
+            + f"duration={minutes} call_id={vapi_call!r} tool_call_id={tool_call_id!r}"
+        );
 
         target: Prospect | None = None;
         if self.prospect_id {
@@ -595,19 +655,71 @@ async walker:pub BookInterview {
             );
         }
 
+        # ------------------------------------------------------------------
+        # Resolve WHEN. The server is the authority, not the model.
+        #
+        # The model's ISO is only a hint: accepted if it parses, lands in the
+        # future, and sits inside the booking horizon. A hallucinated year or a
+        # "today" carried over from the training cutoff fails those tests, and
+        # we fall back to parsing the phrase the human actually said against
+        # the real clock. If neither yields a slot we raise rather than guess.
+        # ------------------------------------------------------------------
+        clock = now_local();
+        slot = validate_iso_hint(start, clock, demo_timezone());
+        if slot is None {
+            phrase = spoken if spoken.strip() else start;
+            if not phrase.strip() {
+                raise ValueError(
+                    "BookInterview: no usable time arrived - start_time was "
+                    + f"'{start}' and spoken_time was '{spoken}'. Refusing to invent a slot."
+                );
+            }
+            slot = resolve_spoken_time(
+                phrase, clock, demo_timezone(), prospect_timezone(target)
+            );
+        }
+        print(
+            f"[BookInterview] resolved -> {slot['iso']} via {slot['basis']} "
+            + f"(speaker_tz={slot['speaker_tz']}, ambiguous={slot['ambiguous']})"
+        );
+
+        if minutes <= 0 {
+            minutes = default_meeting_minutes();
+        }
+
+        # Availability is advisory: a lookup failure must never block a booking
+        # the human just asked for out loud, so it is reported, never enforced.
+        free = True;
+        conflicts: list[str] = [];
+        availability_checked = True;
+        try {
+            (free, conflicts) = await check_availability(slot["start"], minutes);
+        } except Exception as probe_err {
+            availability_checked = False;
+            conflicts = [f"availability lookup failed: {probe_err}"];
+        }
+
         founder = founder_context();
         booked = await create_meeting(
             f"{founder['name']} and {target.name}",
             (
                 "Booked live during a phone call by TRACTION.\n\n"
+                + f"Heard on the call: \"{slot['heard']}\"\n"
+                + f"Resolved to: {slot['spoken_back']} ({slot['basis']})\n\n"
                 + f"What we found: {best_linkedin_quote(target)}\n"
                 + f"What they built: {best_github_artifact(target)}"
             ),
-            start,
+            str(slot["iso"]),
             [founder_email(), guest],
             minutes,
             30
         );
+
+        # Speak back what Google ACTUALLY stored, re-derived from its response -
+        # not the string we sent and not the phrase we heard. Reading the raw
+        # ISO here is what produced "Booked for 2026-07-26T17:58:27.383985-07:00"
+        # over TTS: unintelligible, so nobody could catch the wrong slot.
+        confirmed = confirmed_slot(str(booked["start"]));
 
         record = target +>:Booked(booked_at=time.time()):+> Booking(
             event_id=str(booked["event_id"]),
@@ -617,12 +729,22 @@ async walker:pub BookInterview {
             html_link=str(booked["html_link"])
         );
 
-        spoken = (
-            f"Booked for {booked['start']}. The invite is on its way to {guest} "
+        spoken_line: str = (
+            f"Booked for {confirmed}. The invite is on its way to {guest} now, "
             + "with a Google Meet link."
         );
+        if not free {
+            spoken_line = (
+                f"Booked for {confirmed}, though {founder['name']} already has "
+                + "something on the calendar then, so he may need to move it. The "
+                + f"invite is on its way to {guest} with a Google Meet link."
+            );
+        }
+
         report {
-            "results": [{"toolCallId": tool_call_id, "name": "book_interview", "result": spoken}],
+            "results": [
+                {"toolCallId": tool_call_id, "name": "book_interview", "result": spoken_line}
+            ],
             "ok": True,
             "prospect": target.name,
             "prospect_id": jid(target),
@@ -631,7 +753,16 @@ async walker:pub BookInterview {
             "html_link": booked["html_link"],
             "start": booked["start"],
             "attendees": booked["attendees"],
-            "booking_jid": jid(record)
+            "booking_jid": jid(record),
+            "heard": slot["heard"],
+            "resolved_by": slot["basis"],
+            "speaker_timezone": slot["speaker_tz"],
+            "timezone_source": slot["source_tz"],
+            "ambiguous": slot["ambiguous"],
+            "spoken_confirmation": spoken_line,
+            "calendar_free": free,
+            "availability_checked": availability_checked,
+            "conflicts": conflicts
         };
         disengage;
     }
