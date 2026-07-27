@@ -75,7 +75,7 @@ def issue_query(phrase: str, since: str) -> str {
 }
 
 
-walker GithubLane {
+walker:pub GithubLane {
     has keywords: list[str] = [];
     has pain_phrases: list[str] = [];
     has negative_keywords: list[str] = [];

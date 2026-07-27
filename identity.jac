@@ -270,7 +270,7 @@ is expected for roughly a fifth of any pool and is not an error.
 Every drop records a written `dropped_reason`. That is not politeness: the
 ledger of eliminated candidates is shown on stage, and a candidate that simply
 vanishes is indistinguishable from a bug in the pipeline."""
-walker ResolveEmail {
+walker:pub ResolveEmail {
     has resolved: int = 0;
     has dropped: int = 0;
     has ledger: list[dict[str, any]] = [];
@@ -470,7 +470,7 @@ Candidate logins are ranked by evidence that cannot be self-asserted:
     match is VERIFIED.
   * Name similarity alone is POSSIBLE at best. Two humans share a name far
     more often than two humans share an org."""
-walker CrossLinkToGithub {
+walker:pub CrossLinkToGithub {
     has contact_info_text: str = "";
     has about_text: str = "";
     has posts_text: str = "";
@@ -652,7 +652,7 @@ to GitHub while the fourth stays a terminal - spending sixty seconds of
 scraping here would trade that away for detail the outreach does not need.
 
 Runs against the top `limit` candidates only, for the same reason."""
-walker CrossLinkToLinkedIn {
+walker:pub CrossLinkToLinkedIn {
     has limit: int = 2;
     has harvested: dict[str, any] = {};
     has linked: int = 0;
@@ -801,7 +801,7 @@ prospect surfaced by two or more distinct lanes is not merely twice-confirmed;
 they were found by researchers following different doctrines down different
 paths who happened to land on the same human. `score_pre_crosslink` is recorded
 before it is applied so the UI can show the number moving."""
-walker RankAndSelect {
+walker:pub RankAndSelect {
     has top_n: int = 3;
     has selected: list[dict[str, any]] = [];
     has drops: list[dict[str, any]] = [];
