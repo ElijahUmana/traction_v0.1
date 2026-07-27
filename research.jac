@@ -605,6 +605,10 @@ walker LinkedInLane {
     has seq: int = 0;
     has seen_handles: list[str] = [];
     has candidates: list[ProspectCandidate] = [];
+    # Buffers flushed to the graph by the orchestrator after `wait`.
+    has narration: list[NarrationRec] = [];
+    has findings: list[FindingRec] = [];
+    has probe_log: list[ProbeRec] = [];
     has llm_degraded: bool = False;
     has failure: str = "";
 
@@ -688,6 +692,13 @@ walker LinkedInLane {
             ReasoningKind.PLAN
         );
 
+        self.probe_log.append(
+            ProbeRec(
+                keywords=first.keywords, date_posted=first.date_posted,
+                rung=first.rung, move=first.move, reason=first.reason,
+                url=probe_url(first)
+            )
+        );
         seed = here +>:Probe(created_at=time.time()):+> SearchProbe(
             keywords=first.keywords,
             date_posted=first.date_posted,
@@ -784,6 +795,13 @@ walker LinkedInLane {
             ReasoningKind.PIVOT
         );
 
+        self.probe_log.append(
+            ProbeRec(
+                keywords=nxt.keywords, date_posted=nxt.date_posted,
+                rung=nxt.rung, move=nxt.move, reason=nxt.reason,
+                url=probe_url(nxt)
+            )
+        );
         child = here +>:Widened(because=here.state):+> SearchProbe(
             keywords=nxt.keywords,
             date_posted=nxt.date_posted,
@@ -825,9 +843,13 @@ impl LinkedInLane.pace(seconds: float) {
 
 
 impl LinkedInLane.narrate(here: Lane, sentence: str, kind: ReasoningKind) {
+    # Buffered, not written. See NarrationRec: nodes created inside a `flow`
+    # thread never attach to the guest root, so the orchestrator flushes these
+    # in its own context after `wait`. Order is preserved by list order.
     self.seq += 1;
-    r = Reasoning(t=time.time(), sentence=sentence, kind=kind);
-    here +>:Emitted(seq=self.seq):+> r;
+    self.narration.append(
+        NarrationRec(t=time.time(), sentence=sentence, kind=kind)
+    );
 }
 
 
@@ -898,27 +920,11 @@ impl LinkedInLane.record(
     }
     self.seen_handles.append(cand.handle);
 
-    p = here +>:Surfaced(
-        at_rank=len(self.candidates) + 1,
-        found_at=time.time(),
-        query=probe.keywords
-    ):+> Prospect(
-        name=cand.name,
-        handle=cand.handle,
-        headline=cand.headline,
-        company=cand.company
+    self.findings.append(
+        FindingRec(
+            cand=cand, kind=kind, recency=recency, query=probe.keywords
+        )
     );
-
-    ev = p +>:HasEvidence(
-        lane=self.lane_id, confidence=cand.relevance
-    ):+> Evidence(
-        source=EvidenceSource.LINKEDIN,
-        quote=cand.quote,
-        url=cand.source_url,
-        kind=kind,
-        recency_days=recency
-    );
-
     self.candidates.append(cand);
     self.narrate(here, say_yield(cand.name, cand.quote, recency), ReasoningKind.HIT);
     return True;
@@ -1300,6 +1306,43 @@ impl LaneC.harvest(here: Lane, probe: SearchProbe, results: list) -> int {
 # The fan-out
 # ===========================================================================
 
+obj NarrationRec {
+    """One sidebar line, buffered in the thread and written by the orchestrator.
+
+    A `flow` thread in a server request can MUTATE a node that already lives on
+    the guest root, but a node it CREATES never attaches to that root - measured
+    over HTTP: lane.state=dry was visible while every Reasoning the thread wrote
+    was invisible. So the thread buffers and the orchestrator writes.
+    """
+    has t: float;
+    has sentence: str;
+    has kind: ReasoningKind = ReasoningKind.OBSERVE;
+}
+
+
+obj FindingRec {
+    """One surfaced human plus the evidence, buffered for the same reason."""
+    has cand: ProspectCandidate;
+    has kind: EvidenceKind = EvidenceKind.POST;
+    has recency: int = -1;
+    has query: str = "";
+}
+
+
+obj ProbeRec {
+    """One rung of the ladder, buffered so the search tree survives the thread."""
+    has keywords: str;
+    has date_posted: str = "";
+    has rung: int = 0;
+    has move: str = "seed";
+    has reason: str = "";
+    has state: str = "pending";
+    has yield_count: int = 0;
+    has result_count: int = 0;
+    has url: str = "";
+}
+
+
 obj LaneResult {
     has lane_id: str;
     has found: int = 0;
@@ -1314,6 +1357,11 @@ obj LaneResult {
     # True when the lane hit its wall-clock bound. A partial result must never
     # be presentable as a complete one.
     has timed_out: bool = False;
+    # Buffers carried out of the thread for the orchestrator to write. See
+    # NarrationRec for why the thread cannot write them itself.
+    has narration: list[NarrationRec] = [];
+    has findings: list[FindingRec] = [];
+    has probes: list[ProbeRec] = [];
 }
 
 
@@ -1391,43 +1439,30 @@ def run_lane(
         live_url=lane_node.live_url,
         started_at=t0,
         finished_at=time.time(),
-        timed_out=w.timed_out
+        timed_out=w.timed_out,
+        narration=w.narration,
+        findings=w.findings,
+        probes=w.probe_log
     );
 }
 
 
-def launch_lane(
-    lane_node: Lane, lane_id: str, phrases_json: str,
-    ctx: str, hyp: str, off: bool, fx: str, deadline_s: float
-) -> any {
-    """Start one lane and hand back its future.
-
-    Launching through a function rather than writing `flow run_lane(s.node, ...)`
-    inline in the comprehension is NOT stylistic. In Jac 0.34.7 a `flow` call
-    whose arguments reference the comprehension's loop variable is racy: the
-    thread can read that variable AFTER the loop has advanced, so every lane
-    ends up running the LAST spec. Observed live - all three panels became lane
-    C, writing 3x the narration onto one Lane node while A and B sat empty.
-    A function call gives each invocation its own parameter binding, so there is
-    no shared variable left for a thread to re-read.
-    """;
-    return flow run_lane(
-        lane_node, lane_id, ctx, hyp, phrases_json, off, fx, deadline_s
-    );
-}
 
 
 def run_lane_w(
-    lane_jid: str, warm_url: str, warm_name: str, preferred: str,
+    lane: Lane, warm_url: str, warm_name: str, preferred: str,
     warm_email: str, ctx: str
 ) -> dict {
     """Body of Lane W, run inside its own thread.
 
     Takes a jid rather than a node for the same reason the other lanes do: a
     container is not sendable across a concurrency boundary, and re-resolving
-    with jobj() inside the thread makes this thread's writes visible.
+    Takes the NODE, not a jid. Re-resolving with jobj() inside the thread looks
+    equivalent and is not: in a server request the walker is bound to the guest
+    root and a `flow` thread does not inherit that binding, so jobj() cannot see
+    a Lane created microseconds earlier and the Go button 500s. It only ever
+    worked under `jac run`, where the local root is ambient in the process.
     """;
-    lane = jobj(lane_jid);
     w: LaneW = LaneW(
         context_id=ctx, warm_url=warm_url, warm_name=warm_name,
         preferred_name=preferred, warm_email=warm_email
@@ -1437,23 +1472,8 @@ def run_lane_w(
 }
 
 
-def launch_lane_w(
-    lane_jid: str, warm_url: str, warm_name: str, preferred: str,
-    warm_email: str, ctx: str
-) -> any {
-    """Same eager-binding rule as launch_lane - see the note there.""";
-    return flow run_lane_w(lane_jid, warm_url, warm_name, preferred, warm_email, ctx);
-}
 
 
-def launch_github(
-    lane_node: Lane, keywords_json: str, pains_json: str, negatives_json: str
-) -> any {
-    """Same eager-binding rule as launch_lane - see the note there.""";
-    return flow run_github_lane(
-        lane_node, keywords_json, pains_json, negatives_json
-    );
-}
 
 
 walker:pub RunResearch {
@@ -1475,12 +1495,19 @@ walker:pub RunResearch {
     # thing most likely to be typed wrong under pressure.
     has lane_deadline_s: float = 90.0;
     has include_github: bool = True;
-    has run: any = None;
+    # A jid string, not the node. A walker's `has` fields become the endpoint's
+    # request body, and a NODE-typed field emits no `default` in the OpenAPI
+    # schema however it is annotated - both `any = None` and `ResearchRun | None`
+    # land in `required`, so a `{}` POST body 422s before the walker ever runs.
+    # This is the dashboard's Go button; it has to accept `{}`. The run is
+    # walker state, not an input - only its id needs to leave.
+    has run_jid: str = "";
     has lane_results: list[LaneResult] = [];
     has converged: int = 0;
     has unique_prospects: int = 0;
     has reports: list[dict] = [];
 
+    def flush(run: ResearchRun);
     def merge(run: ResearchRun);
     def narrate_run(lane: Lane, sentence: str, kind: ReasoningKind);
 
@@ -1524,7 +1551,7 @@ impl RunResearch.start with Founder entry {
     run = here +>:Runs(created_at=time.time()):+> ResearchRun(
         started_at=time.time(), status=RunStatus.RUNNING
     );
-    self.run = run;
+    self.run_jid = jid(run);
 
     # Build the lane nodes up front so the dashboard has something to bind to
     # before any of them has produced a single line.
@@ -1570,36 +1597,46 @@ impl RunResearch.start with Founder entry {
     #
     # Separate names solve both: nothing is shared to race on, and the real node
     # crosses so no root lookup is needed. Three lanes is fixed by the demo.
-    futures = [];
-    if len(specs) > 0 {
-        sa = specs[0];
-        futures.append(
-            launch_lane(
-                sa.node, sa.lane_id, sa.phrases_json,
-                ctx, hypothesis, offline, fixture_json, deadline
-            )
-        );
-    }
-    if len(specs) > 1 {
-        sb = specs[1];
-        futures.append(
-            launch_lane(
-                sb.node, sb.lane_id, sb.phrases_json,
-                ctx, hypothesis, offline, fixture_json, deadline
-            )
-        );
-    }
-    if len(specs) > 2 {
-        sc = specs[2];
-        futures.append(
-            launch_lane(
-                sc.node, sc.lane_id, sc.phrases_json,
-                ctx, hypothesis, offline, fixture_json, deadline
-            )
-        );
-    }
+    # ONE COMPREHENSION PER LANE, EACH OVER A SINGLE-ELEMENT SLICE.
+    #
+    # Odd-looking, and it is the only shape that satisfies three constraints at
+    # once - each learned by breaking it:
+    #
+    #  1. RACE. `[flow run_lane(s.node, ...) for s in specs]` lets the worker
+    #     read the loop variable AFTER the loop advanced, so all three lanes ran
+    #     the LAST spec: three identical panels, no error. A slice of length one
+    #     can never advance, so a late read is still correct.
+    #
+    #  2. HTTP. Passing `jid(node)` and calling `jobj()` in the worker fixed the
+    #     race and then 500'd over HTTP - in a server request the walker is bound
+    #     to the GUEST root and a `flow` thread does not inherit that binding, so
+    #     jobj() cannot see a Lane created microseconds earlier. Passing the node
+    #     itself needs no root lookup and works on both paths.
+    #
+    #  3. SENDABILITY. E1308 accepts an attribute read off a COMPREHENSION loop
+    #     variable and rejects the same read off a plain local or a parameter, so
+    #     this cannot be hoisted into a helper or a named variable.
+    futures = (
+        [
+            flow run_lane(
+                x.node, x.lane_id, ctx, hypothesis, x.phrases_json,
+                offline, fixture_json, deadline
+            ) for x in specs[0:1]
+        ]
+        + [
+            flow run_lane(
+                x.node, x.lane_id, ctx, hypothesis, x.phrases_json,
+                offline, fixture_json, deadline
+            ) for x in specs[1:2]
+        ]
+        + [
+            flow run_lane(
+                x.node, x.lane_id, ctx, hypothesis, x.phrases_json,
+                offline, fixture_json, deadline
+            ) for x in specs[2:3]
+        ]
+    );
     if len(specs) > 3 {
-        # No silent cap: say what was dropped rather than quietly running three.
         print(
             f"RunResearch: {len(specs) - 3} LinkedIn lane(s) beyond the third "
             + "were not launched - the fan-out is unrolled to three by design."
@@ -1633,14 +1670,11 @@ impl RunResearch.start with Founder entry {
             )
         );
     }
-    gh_futures = [];
-    for gs in gh_specs {
-        gh_futures.append(
-            launch_github(
-                gs.node, gs.phrases_json, gs.pains_json, gs.negatives_json
-            )
-        );
-    }
+    gh_futures = [
+        flow run_github_lane(
+            x.node, x.phrases_json, x.pains_json, x.negatives_json
+        ) for x in gh_specs[0:1]
+    ];
 
     # ---- collect: only now do we block ------------------------------------
     # ---- Lane W: the warm lead, in the same fan-out --------------------
@@ -1657,15 +1691,14 @@ impl RunResearch.start with Founder entry {
                      + "reading them properly, so the first email can quote "
                      + "what they actually said."
         );
-        w_futures.append(
-            launch_lane_w(
-                jid(w_node), warm_url,
-                env("TEAMMATE_NAME", "", False),
-                env("TEAMMATE_PREFERRED_NAME", "", False),
-                env("TEAMMATE_EMAIL", "", False),
-                ctx
-            )
-        );
+        w_name: str = env("TEAMMATE_NAME", "", False);
+        w_pref: str = env("TEAMMATE_PREFERRED_NAME", "", False);
+        w_mail: str = env("TEAMMATE_EMAIL", "", False);
+        w_specs: list[LaneSpec] = [LaneSpec(node=w_node, lane_id="W")];
+        w_futures = [
+            flow run_lane_w(x.node, warm_url, w_name, w_pref, w_mail, ctx)
+            for x in w_specs[0:1]
+        ];
     }
 
     self.lane_results = (
@@ -1673,6 +1706,13 @@ impl RunResearch.start with Founder entry {
         + [wait g for g in gh_futures]
         + [wait w for w in w_futures]
     );
+
+    # ---- flush: the orchestrator writes what the threads could only buffer --
+    # This runs in the walker's own context, so these nodes actually attach to
+    # the guest root and are visible over HTTP. Doing it here rather than in the
+    # threads costs nothing: the expensive part (browser I/O) already ran
+    # concurrently, and only the writes are serialised.
+    self.flush(run);
 
     run.status = RunStatus.CROSSLINKING;
     self.merge(run);
@@ -1717,6 +1757,113 @@ def run_github_lane(
 
 
 # --- merge, dedupe, convergence -------------------------------------------
+
+def _f(o: any, k: str, d: any) -> any {
+    """Read a field whether `o` came back as an object or as a plain dict.
+
+    `flow`/`wait` does not guarantee the object identity of what a worker
+    returned. Over HTTP the LaneResult comes back as a nested dict, so every
+    `r.lane_id` in flush() raised `'dict' object has no attribute 'lane_id'`
+    and the whole Go button 500'd - after the lanes had already done all their
+    work. Under `jac run` the same objects come back as objects and none of
+    this appears, which is why every local proof was green.
+
+    Reading through one accessor rather than converting the tree keeps this
+    lossless: nothing is reconstructed, dropped, or defaulted silently, and a
+    genuinely missing field still surfaces as the caller's own default.
+    """;
+    if isinstance(o, dict) {
+        return o.get(k, d);
+    }
+    return getattr(o, k, d);
+}
+
+
+impl RunResearch.flush(run: ResearchRun) {
+    """Write every buffered Reasoning, SearchProbe, Prospect and Evidence.
+
+    A `flow` thread in a server request can mutate a node that already lives on
+    the guest root but cannot attach a NEW one to it. Measured over HTTP: each
+    lane reported nine probes and `lane.state=dry` was visible, while every
+    Reasoning the thread created was invisible and the sidebar was empty. Under
+    `jac run` the local root is ambient, so this never showed up in any local
+    proof.
+    """;
+    by_id: dict[str, Lane] = {};
+    for l in [run ->:HasLane:->] {
+        by_id[str(l.lane_id)] = l;
+    }
+
+    for r in self.lane_results {
+        r_lane_id = _f(r, "lane_id", "");
+        if r_lane_id not in by_id {
+            continue;
+        }
+        lane = by_id[r_lane_id];
+
+        seq = 0;
+        for n in (_f(r, "narration", []) or []) {
+            seq += 1;
+            lane +>:Emitted(seq=seq):+> Reasoning(
+                t=_f(n, "t", 0.0),
+                sentence=_f(n, "sentence", ""),
+                kind=_f(n, "kind", "")
+            );
+        }
+
+        # Rebuild the ladder shape: rung 0 hangs off the Lane, each later rung
+        # off its predecessor, so the dead branches stay visible in printgraph.
+        # A list rather than an Optional: the checker cannot narrow
+        # `SearchProbe | None` back to SearchProbe inside a loop body, and a
+        # one-element chain tail carries the same information without asking
+        # it to.
+        chain: list[SearchProbe] = [];
+        for pr in (_f(r, "probes", []) or []) {
+            fresh = SearchProbe(
+                keywords=_f(pr, "keywords", ""),
+                date_posted=_f(pr, "date_posted", ""),
+                rung=_f(pr, "rung", 0),
+                move=_f(pr, "move", ""),
+                reason=_f(pr, "reason", ""),
+                state=_f(pr, "state", ""),
+                yield_count=_f(pr, "yield_count", 0),
+                result_count=_f(pr, "result_count", 0),
+                url=_f(pr, "url", "")
+            );
+            if chain {
+                chain[-1] +>:Widened(because="dry"):+> fresh;
+            } else {
+                lane +>:Probe(created_at=time.time()):+> fresh;
+            }
+            chain = [fresh];
+        }
+
+        rank = 0;
+        for f in (_f(r, "findings", []) or []) {
+            rank += 1;
+            cand = _f(f, "cand", {});
+            pnode = lane +>:Surfaced(
+                at_rank=rank, found_at=time.time(), query=_f(f, "query", "")
+            ):+> Prospect(
+                name=_f(cand, "name", ""),
+                handle=_f(cand, "handle", ""),
+                headline=_f(cand, "headline", ""),
+                company=_f(cand, "company", "")
+            );
+            pnode +>:HasEvidence(
+                lane=LaneId(r_lane_id),
+                confidence=_f(cand, "relevance", 0.0)
+            ):+> Evidence(
+                source=EvidenceSource.LINKEDIN,
+                quote=_f(cand, "quote", ""),
+                url=_f(cand, "source_url", ""),
+                kind=_f(f, "kind", ""),
+                recency_days=_f(f, "recency", 0)
+            );
+        }
+    }
+}
+
 
 impl RunResearch.merge(run: ResearchRun) {
     """Serial pass. Two lanes finding the same person is the product thesis, so
@@ -1811,7 +1958,7 @@ impl RunResearch.narrate_run(lane: Lane, sentence: str, kind: ReasoningKind) {
 
 impl RunResearch.finish with Founder exit {
     report {
-        "run": jid(self.run) if self.run is not None else "",
+        "run": self.run_jid,
         "lanes": [
             {
                 "lane": r.lane_id,

@@ -57,8 +57,15 @@ walker:pub SeedRehearsalRun {
             disengage;
         }
         founders = [root --> [?:Founder]];
+        # Read the real founder from .env, exactly as every other call site does.
+        # A hardcoded placeholder here does not stay inside the rehearsal: this
+        # Founder is the one a real Google Calendar invite is titled after, and a
+        # real invite reached Becky's real calendar reading "rehearsal founder
+        # and Becky Zhu". Seed data that leaks into a live external system is not
+        # seed data any more.
         founder = founders[0] if founders else (root ++> Founder(
-            name="rehearsal founder", email="rehearsal@example.invalid"
+            name=cfg("FOUNDER_NAME", "Founder"),
+            email=cfg("FOUNDER_EMAIL", "founder@example.invalid")
         )) as Founder;
 
         run = (founder +>: Runs :+> ResearchRun(
