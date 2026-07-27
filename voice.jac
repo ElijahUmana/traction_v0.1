@@ -325,12 +325,22 @@ def midcall_tools -> list[dict] {
 
 """Place the outbound call and pre-cache everything it will need mid-flight.
 
-earliestAt defaults to a few seconds out so the phone rings inside the demo
-window rather than whenever Vapi's scheduler next wakes up.
+`delay_seconds = 0` dials IMMEDIATELY, and that is the default on purpose.
+
+A `schedulePlan.earliestAt` does not mean "ring at this timestamp" - it means
+"do not ring before it". Vapi then dials whenever its scheduler next wakes,
+which is tens of seconds later and not bounded by anything we control. The
+walker itself returns in 0.3s, so the whole wait was queue latency we had
+opted into for no benefit: with `earliestAt` five seconds out, the phone still
+took far longer than five seconds to ring.
+
+Omitting `schedulePlan` entirely puts the call on the wire in the same
+request. Set `delay_seconds` above zero only when you genuinely want a future
+call - a reply that arrives at 2am and should be answered at 9.
 """
 async walker:pub ScheduleCall(ProspectLookup) {
     has phone_number: str = "";
-    has delay_seconds: int = 5;
+    has delay_seconds: int = 0;
     has dry_run: bool = False;
     has reports: list[dict] = [];
 
@@ -368,7 +378,6 @@ async walker:pub ScheduleCall(ProspectLookup) {
             "phoneNumberId": phone_id,
             "assistantId": assistant_id,
             "customer": {"number": number, "name": here.name},
-            "schedulePlan": {"earliestAt": earliest},
             "assistantOverrides": {
                 "variableValues": {
                     "prospect_name": address_as(here),
@@ -391,6 +400,14 @@ async walker:pub ScheduleCall(ProspectLookup) {
                 "serverMessages": ["end-of-call-report"]
             }
         };
+
+        # Only ask Vapi to schedule when a future call is genuinely wanted.
+        # With no schedulePlan the call goes on the wire in this request; with
+        # one, Vapi holds it until its scheduler next wakes, which is why a
+        # five-second earliestAt still took far longer than five seconds to ring.
+        if self.delay_seconds > 0 {
+            payload["schedulePlan"] = {"earliestAt": earliest};
+        }
 
         if self.dry_run {
             # Everything above is real - ids resolved from the live Vapi account,
