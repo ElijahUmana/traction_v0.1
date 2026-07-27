@@ -1,0 +1,42 @@
+THE GO BUTTON, OVER HTTP — the only acceptance that counts
+Captured from an isolated server (/tmp/rsrv, port 8931). Every `jac run` proof
+of RunResearch was green for a reason that does not exist in the demo.
+
+BEFORE (DEMOPATH, on the shipped code)
+  POST /walker/RunResearch  ->  HTTP 500 in 0.087s, graph completely unmoved
+  {"code":"EXECUTION_ERROR",
+   "message":"jid e301638... does not resolve to a Lane"}
+
+AFTER
+  POST /walker/RunResearch {"offline":true,"include_github":false}
+    -> HTTP 200 in 1.7s
+  census BEFORE : founders=1 runs=0 lanes=0 probes=0 reasoning=0   prospects=0
+  census AFTER  : founders=1 runs=1 lanes=3 probes=3 reasoning=88  prospects=0
+
+  second run, with page fixtures so the lanes actually surface people:
+    -> HTTP 200 in 3.3s
+  census        : runs=2 lanes=6 probes=6 reasoning=201
+                  prospects=2  converged_prospects=1  dropped=2
+
+  openapi: RunResearch requestBody required = None   (a `{}` body is accepted)
+
+THREE DEFECTS, ALL ONLY VISIBLE OVER HTTP
+
+1. jid -> jobj round-trip 500'd.
+   A `flow` thread does not inherit the walker's GUEST-root binding, so
+   jobj() could not see a Lane created microseconds earlier. Fixed by passing
+   the node itself. Under `jac run` the local root is ambient, so it resolved.
+
+2. A node-typed `has` field is always OpenAPI-`required`.
+   `has run: any = None` AND `has run: ResearchRun | None = None` both land in
+   `required`, so a `{}` POST 422'd before the walker ran. Now a jid string.
+
+3. Threads can MUTATE guest-root nodes but cannot ATTACH new ones.
+   Each lane reported 9 probes and lane.state=dry was visible, while every
+   Reasoning the thread created was invisible - an empty analyst sidebar.
+   Fixed by buffering in the thread and flushing from the orchestrator after
+   `wait`. Parallelism is unaffected: the browser I/O still runs concurrently,
+   only the writes are serialised.
+
+reasoning 0 -> 201 and prospects 0 -> 2 with a convergence is the whole
+research stage proving itself on the path the dashboard actually uses.
