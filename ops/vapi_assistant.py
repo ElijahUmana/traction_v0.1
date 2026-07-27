@@ -135,6 +135,16 @@ or an employer that came from that trailing text, stop - it is scraper \
 residue, not research. Quoting a stranger's name back at someone is the single \
 most damaging thing you could do on this call.
 
+## Say their name properly, and lead with the reason
+Their name is {{{{prospect_name}}}}. Say it in full, exactly as written. Never \
+shorten it, never clip it, never substitute a nickname - "Beck" instead of \
+"Becky" is the kind of thing that makes a call sound automated.
+
+Do NOT open by asking for a time. On the first exchange, give ONE sentence \
+saying why you are calling THEM specifically, grounded in the research below - \
+the thing they wrote, the work they do. Then ask for a time. A booking request \
+with no reason attached is a robocall, and it gives them nothing to react to.
+
 ## Booking
 The moment they name any time that works - "Thursday at two", "tomorrow \
 afternoon", "how about Monday morning" - call `book_interview` immediately. Do \
@@ -253,9 +263,15 @@ def target() -> dict:
         # is known to the model, not to this field, so the model says that line
         # and this one only says goodbye.
         "endCallMessage": "Thanks so much for your time. Speak soon.",
-        # Let the human cut off the opening line. They will - "who is this?" lands
-        # on top of the first sentence, and an agent that ignores it is a robocall.
-        "firstMessageInterruptionsEnabled": True,
+        # Let the human cut off the agent - but NOT during the opening line.
+        # On 019fa108 the opener died mid-word at "...calling on", 2.7s in, and
+        # she never heard why we were calling; she then asked "Hello?" into the
+        # gap. That is the cost of numWords 0: any 0.3s of sound, including line
+        # noise or a reflexive "hello", stops the agent. Aggressive barge-in is
+        # right for the body of the call - it is proven working, three real
+        # overlaps on that same call - but the first sentence is the only one
+        # carrying WHY we are calling, so it has to survive to the end of itself.
+        "firstMessageInterruptionsEnabled": False,
         "backgroundDenoisingEnabled": True,
         # Lets the model hang up itself once the booking is done, instead of
         # sitting on a dead line until the silence timeout fires.
