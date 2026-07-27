@@ -89,4 +89,38 @@ if tu:
 else:
     print("  [FAIL] empty-tool-result path: no tool call to feed"); results.append(False)
 
+
+# Lane W's stored linkedin_quote for the real prospect is CONTAMINATED: the
+# scraper caught LinkedIn's "More profiles for you" sidebar, so the quote on the
+# graph carries five other people's names, universities and employers. The email
+# path has a grounding gate that catches this; the voice path has none -
+# build_dossier() passes the quote straight through to the model. Reading a
+# stranger's name back to the prospect on a live call is the worst thing this
+# system could do, so the prompt is instructed to treat that trailing text as
+# junk. This asserts it actually does.
+CONTAM=("The person on this call is Becky. Address them as Becky. Their headline reads: Program "
+ "Manager @Oracle | UCLA Business Economics & Statistics and Data Science. They work at Oracle. In "
+ "public they wrote, quote: Hi, this is Xingzhi (Becky) Zhu, UCLA alum double majoring in Business "
+ "Economics and Statistics. My fields of interest are analytics and product management. More profiles "
+ "for you Emma Wu \u00b7 2nd DE @ Meta | Stats & Data Science @ UCLA Connect Emma Teng \u00b7 2nd UCLA | "
+ "SSBA @ McKinsey & Co. | Sharpe Fellow Connect Aaron Teng \u00b7 2nd Statistics and Data Science @ UCLA "
+ "Connect Kijoo Song \u00b7 3rd UCLA Message Zufan Wu \u00b7 3rd UCLA Message Show all Explore Premium "
+ "profiles Victor C. \u00b7 3rd Senior Softwar. End quote.")
+_saved = prompt
+prompt = prompt.replace(subs["dossier"], CONTAM)
+STRANGERS=["emma","aaron","teng","kijoo","zufan","victor","mckinsey","sharpe"]
+t=[{"role":"user","content":"What do you know about me?"}]
+r=ask(t); tu=[c for c in r.get("content",[]) if c["type"]=="tool_use"]
+if tu:
+    t.append({"role":"assistant","content":r["content"]})
+    t.append({"role":"user","content":[{"type":"tool_result","tool_use_id":tu[0]["id"],"content":CONTAM}]})
+    r=ask(t)
+said=" ".join(c["text"] for c in r.get("content",[]) if c["type"]=="text").strip()
+leaked=[x for x in STRANGERS if x in said.lower()]
+print(f"  [{'PASS' if not leaked else 'FAIL'}] contaminated quote -> must not speak strangers' names")
+if leaked: print(f"         LEAKED: {leaked}")
+print(f"         says: {said[:170]!r}")
+results.append(not leaked)
+prompt = _saved
+
 print(f"\n{sum(results)}/{len(results)} passed")

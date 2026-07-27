@@ -217,7 +217,8 @@ start_server() {
   for i in $(seq 1 300); do
     code="$(curl -s -m 5 -o /dev/null -w '%{http_code}' -X POST \
       "http://127.0.0.1:$PORT/function/graph_health" \
-      -H 'Content-Type: application/json' -d '{}' 2>/dev/null || echo 000)"
+      -H 'Content-Type: application/json' -d '{}' 2>/dev/null || true)"
+    code="${code:-000}"
     if [ "$code" = "200" ]; then
       echo "    serving real traffic after ${i}s (graph_health 200)"
       return 0
@@ -225,6 +226,15 @@ start_server() {
     if [ "$code" != "000" ] && [ "$bound" = "0" ]; then
       bound=1
       echo "    port bound at ${i}s, but graph_health says $code - still waiting for a REAL 200"
+    fi
+    # Do not sit out the full 300s waiting for a process that is already gone.
+    # A `jac start` that dies at launch leaves an EMPTY log and a silent wait,
+    # which reads exactly like a slow compile - that cost real time to diagnose.
+    if ! pgrep -f "jac start main.jac --no-client -p $PORT" >/dev/null 2>&1; then
+      echo "    !! the jac process is gone after ${i}s - it died at launch, it is not compiling"
+      echo "       (log is $LOG, $(wc -c < "$LOG" 2>/dev/null || echo 0) bytes)"
+      tail -15 "$LOG" 2>/dev/null | sed 's/^/       /'
+      return 1
     fi
     if [ $((i % 30)) -eq 0 ]; then
       echo "    still booting (${i}s) - a post-\`jac clean\` boot recompiles everything"
@@ -292,7 +302,8 @@ echo "==> holding $LOCK (pid ${SERVER_PID:-unknown}, port $PORT)"
 echo "==> warmup (first anonymous request also initialises the guest root)"
 WARM="$(curl -s -m 15 -o /dev/null -w '%{http_code}' -X POST \
   "http://127.0.0.1:$PORT/function/get_run_state" \
-  -H 'Content-Type: application/json' -d '{}' 2>/dev/null || echo 000)"
+  -H 'Content-Type: application/json' -d '{}' 2>/dev/null || true)"
+WARM="${WARM:-000}"
 echo "    warmup: $WARM"
 if [ "$WARM" != "200" ]; then
   echo "    !! warmup did not return 200 - falling through to the smoke gate,"
@@ -319,7 +330,8 @@ smoke() {
     esac
     code="$(curl -s -m 20 -o /dev/null -w '%{http_code}' -X POST \
       "http://127.0.0.1:$PORT/$ep" -H 'Content-Type: application/json' \
-      -d "$body" 2>/dev/null || echo 000)"
+      -d "$body" 2>/dev/null || true)"
+    code="${code:-000}"
     [ "$code" = "200" ] || { fails=$((fails+1)); echo "    !! $ep -> $code"; }
   done
   [ "$fails" -eq 0 ]

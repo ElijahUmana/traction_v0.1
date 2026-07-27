@@ -72,10 +72,10 @@ if [ "$ACTION" = "status" ]; then
   fi
   # A 200 from /healthz proves nothing - it stays 200 through the whole _lock
   # failure. Only a real endpoint tells you anything.
-  HZ="$(curl -s -m 3 -o /dev/null -w '%{http_code}' "http://127.0.0.1:$PORT/healthz" 2>/dev/null || echo 000)"
+  HZ="$(curl -s -m 3 -o /dev/null -w '%{http_code}' "http://127.0.0.1:$PORT/healthz" 2>/dev/null || true)"; HZ="${HZ:-000}"
   GH="$(curl -s -m 10 -o /dev/null -w '%{http_code}' -X POST \
         "http://127.0.0.1:$PORT/function/graph_health" \
-        -H 'Content-Type: application/json' -d '{}' 2>/dev/null || echo 000)"
+        -H 'Content-Type: application/json' -d '{}' 2>/dev/null || true)"; GH="${GH:-000}"
   echo "healthz  : $HZ   <- ignore this, it lies"
   echo "graph_health: $GH  <- this is the real answer"
   [ "$GH" = "200" ] || echo "         !! not serving. ops/serve.sh to (re)start."
@@ -111,7 +111,15 @@ rsync -a --delete \
   --exclude '.git' --exclude '.jac' --exclude '.pytest_cache' \
   --exclude '*.log' --exclude '.jac/data' \
   "$SRC/" "$DIR/"
-[ -f "$SRC/.env" ] && cp "$SRC/.env" "$DIR/.env"
+# .env is NOT in the rsync set above by design (it is gitignored and may be
+# absent in a clone), so copy it explicitly. `&&` alone would abort the whole
+# script under `set -e` when there is no .env - the same class of bug as
+# sourcing it.
+if [ -f "$SRC/.env" ]; then
+  cp "$SRC/.env" "$DIR/.env"
+else
+  echo "    !! no .env in $SRC - every by llm() call will return null"
+fi
 echo "    code synced; $DIR/.jac left untouched"
 
 # restart.sh carries the guest-root preflight, the data-dir-in-use guard, the
