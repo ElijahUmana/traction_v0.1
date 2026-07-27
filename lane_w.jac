@@ -79,28 +79,22 @@ glob PROFILE_JS: str = """
     return out.join(' ').trim();
   };
 
-  // section() reads document.body.innerText, which respects the CSS clamp that
-  // hides most of About behind "see more" -- for this profile that leaves only
-  // the self-introduction and none of the substance. textContent ignores
-  // rendering and returns the whole string, with no click and nothing the
-  // person is notified about. Take whichever is longer.
+  // innerText ONLY, deliberately.
   //
-  // This matters more than it looks: handed the clamped 156-character version,
-  // the model was asked to quote the sentence describing her problem, found
-  // none, and invented one. The grounding check caught it and refused the
-  // email -- correctly, but the email is the demo.
-  let about = section('About');
-  const aboutAnchor = document.querySelector('#about');
-  if (aboutAnchor) {
-    const host = aboutAnchor.closest('section') || aboutAnchor.parentElement;
-    if (host) {
-      const full = (host.textContent || '')
-                     .replace(/\\s+/g, ' ')
-                     .replace(/^\\s*About\\s*/i, '')
-                     .trim();
-      if (full.length > about.length) { about = full; }
-    }
-  }
+  // A textContent read was added here on the theory that About was CSS-clamped
+  // behind "see more". That theory was wrong -- measured on the real profile,
+  // innerText and textContent return the identical 156 characters. What the
+  // textContent read DID do was ignore rendering entirely and sweep in the
+  // "More profiles for you" sidebar, so the stored About evidence came back as
+  //
+  //   "...analytics and product management. More profiles for you Emma Wu - 2nd
+  //    DE @ Meta ... Emma Teng - 2nd UCLA | SSBA @ McKinsey ..."
+  //
+  // - five other people's names and job titles filed as things THIS person
+  // wrote. Contaminated evidence on the one prospect we email, and third
+  // parties' details stored on her node. Reverted.
+  const about = section('About');
+
   const expLines = [];
   const eStart = lines.indexOf('Experience');
   if (eStart >= 0) {
