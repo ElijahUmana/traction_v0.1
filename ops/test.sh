@@ -20,28 +20,42 @@ set -uo pipefail
 cd "$(dirname "$0")/.."
 
 # ---------------------------------------------------------------------------
-# DESTRUCTIVE. This script calls `jac clean --all --force`, which DELETES
-# .jac/data - the graph.
+# THIS SCRIPT NEVER RUNS jac IN THE PRIMARY CHECKOUT. It copies itself out.
 #
-# This is not hypothetical: it wiped the demo graph at 17:18 today. 702 anchors
-# gone (29 Prospects, 18 Founders, 73 Lanes, 44 Evidence), recovered only
-# because a snapshot happened to be taken one minute earlier. Anyone following
-# our own documented test procedure destroyed the demo state.
+# Two separate reasons, both of which bit us today:
 #
-# So it refuses to run against the primary checkout unless you say so out loud.
-# Tests belong in a throwaway clone anyway - see docs/RUNBOOK.md.
+#  1. `jac test` HOLDS .jac/data OPEN for the whole run. Three of my test runs
+#     (47, 27 and 7 minutes) kept the store locked and BLOCKED THE API SERVER
+#     FROM STARTING - server down, tunnel 502, every mid-call Vapi tool failing.
+#     That is the demo's critical path. Running tests is not worth that risk.
+#  2. It calls `jac clean --all --force`, which DELETES .jac/data. That wiped
+#     the demo graph at 17:18 - 702 anchors, saved only by a snapshot taken a
+#     minute earlier.
+#
+# THE REPO ROOT BELONGS TO THE SERVER. Nothing else runs jac in it.
+#
+# So: this script rsyncs the checkout to a scratch dir and runs there. Set
+# TEST_DIR to choose the location. IN_PLACE=1 forces the old behaviour and you
+# should not use it while anyone needs the server.
 # ---------------------------------------------------------------------------
 PRIMARY="/Users/elijahumana/jachacks-traction"
 HERE="$(cd "$(dirname "$0")/.." && pwd -P)"
-if [ "$HERE" = "$PRIMARY" ] && [ "${YES_WIPE:-0}" != "1" ]; then
-  echo "REFUSING: this wipes .jac/data (the graph) and you are in the primary checkout:"
-  echo "  $HERE"
+TEST_DIR="${TEST_DIR:-/tmp/traction-verify}"
+
+if [ "$HERE" = "$PRIMARY" ] && [ "${IN_PLACE:-0}" != "1" ]; then
+  echo "==> not running jac in the primary checkout (the server owns it)"
+  echo "    copying to $TEST_DIR"
+  mkdir -p "$TEST_DIR"
+  # -a preserves modes; exclude the graph store and caches so we never touch
+  # the server's data and never inherit a stale one.
+  rsync -a --delete \
+    --exclude '.jac/' --exclude '.git/' --exclude '__pycache__/' \
+    --exclude 'node_modules/' \
+    "$HERE"/ "$TEST_DIR"/ 2>/dev/null || {
+      echo "!! rsync failed - is $TEST_DIR writable?"; exit 1; }
+  echo "    running suite there"
   echo
-  echo "Run it in a throwaway clone instead:"
-  echo "  git clone $PRIMARY /tmp/tr-test && cd /tmp/tr-test && ops/$(basename "$0")"
-  echo
-  echo "Or, if you really mean to wipe the graph here:  YES_WIPE=1 ops/$(basename "$0")"
-  exit 2
+  cd "$TEST_DIR"
 fi
 
 echo "==> clearing stale cache + persisted graph"

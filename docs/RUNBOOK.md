@@ -28,6 +28,21 @@ ops/test.sh                 # run the suite (no API keys needed)
 
 ---
 
+## 🚧 THE REPO ROOT BELONGS TO THE SERVER
+
+**Nothing but the API server runs `jac` in `/Users/elijahumana/jachacks-traction`.** Not `jac test`, not `jac run`, not a second `jac start`.
+
+`jac test` holds `.jac/data` open for the entire run. Three long test runs (47, 27 and 7 minutes) once kept the store locked and **blocked the API server from starting** — server down, tunnel 502ing, every mid-call Vapi tool failing. That is the demo's critical path, and it is not worth a test run.
+
+```bash
+cp -R /Users/elijahumana/jachacks-traction /tmp/verify && cd /tmp/verify && jac test
+```
+
+`ops/test.sh` now does this for you: it rsyncs the checkout to `/tmp/traction-verify` (excluding `.jac/`, so it never touches the server's graph) and runs there. If you invoke `jac` directly, isolate it yourself.
+
+
+---
+
 ## THE DEMO RUNS FROM AN ISOLATED CHECKOUT ON ITS OWN PORT
 
 **This is the demo configuration.** The working directory's graph store cannot be trusted: every `jac run` and `jac start` in a checkout reads and writes the same unsynchronised `.jac/data`, and concurrent processes corrupt the shared anonymous root (§7 of EVIDENCE.md).
