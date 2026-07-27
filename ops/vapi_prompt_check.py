@@ -66,39 +66,23 @@ results.append(run("names a time -> must call book_interview",
 results.append(run("pure logistics -> must NOT call a tool",
     [{"role":"user","content":"Sorry, can you say that again?"}],None))
 
-# The no-hallucination path. The dossier is blanked FIRST: voice.jac puts the
-# research in the system prompt as well as behind the tool, so with a real
-# dossier present a model quoting it is being accurate, not inventing. Only with
-# nothing in either place does an assertion about this person count as made up.
-prompt = prompt.replace(subs["dossier"], "")
-t=[{"role":"user","content":"What do you know about me?"}]
-r=ask(t)
-tu=[c for c in r.get("content",[]) if c["type"]=="tool_use"]
-if tu:
-    t.append({"role":"assistant","content":r["content"]})
-    t.append({"role":"user","content":[{"type":"tool_result","tool_use_id":tu[0]["id"],
-        "content":"No research is on file for this call, so nothing specific can be claimed about this person."}]})
-    r2=ask(t)
-    said=" ".join(c["text"] for c in r2.get("content",[]) if c["type"]=="text").strip()
-    invented=any(w in said.lower() for w in ["linkedin","github","headline","you wrote","you built","you posted"])
-    honest=any(w in said.lower() for w in ["guess","not sure","don't have","dont have","honestly","can't say","cannot say"])
-    ok = honest and not invented
-    print(f"  [{'PASS' if ok else 'FAIL'}] empty tool result -> must admit, not invent")
-    print(f"         says: {said[:200]!r}")
-    results.append(ok)
-else:
-    print("  [FAIL] empty-tool-result path: no tool call to feed"); results.append(False)
+# The three dossier states matter separately, and they share one global that
+# `ask` closes over - so each scenario rebuilds the prompt from a pristine copy
+# rather than mutating in sequence. An earlier version of this file blanked the
+# dossier for one test and left it blanked, which made the contamination test
+# below replace nothing and pass against an empty prompt. A test that passes for
+# the wrong reason is worse than no test.
+BASE_PROMPT = prompt
 
-
-# Lane W's stored linkedin_quote for the real prospect is CONTAMINATED: the
+# Lane W's stored linkedin_quote for the real prospect IS contaminated: the
 # scraper caught LinkedIn's "More profiles for you" sidebar, so the quote on the
-# graph carries five other people's names, universities and employers. The email
-# path has a grounding gate that catches this; the voice path has none -
-# build_dossier() passes the quote straight through to the model. Reading a
-# stranger's name back to the prospect on a live call is the worst thing this
-# system could do, so the prompt is instructed to treat that trailing text as
-# junk. This asserts it actually does.
-CONTAM=("The person on this call is Becky. Address them as Becky. Their headline reads: Program "
+# graph carries five other people's names, universities and employers. Verified
+# in evidence/chain_join_composeoutreach.txt. The email path has a grounding
+# gate; the voice path has none - build_dossier() passes the quote straight to
+# the model. Saying a stranger's name back to the prospect mid-call is the worst
+# thing this system could do.
+CONTAM = (
+ "The person on this call is Becky. Address them as Becky. Their headline reads: Program "
  "Manager @Oracle | UCLA Business Economics & Statistics and Data Science. They work at Oracle. In "
  "public they wrote, quote: Hi, this is Xingzhi (Becky) Zhu, UCLA alum double majoring in Business "
  "Economics and Statistics. My fields of interest are analytics and product management. More profiles "
@@ -106,21 +90,77 @@ CONTAM=("The person on this call is Becky. Address them as Becky. Their headline
  "SSBA @ McKinsey & Co. | Sharpe Fellow Connect Aaron Teng \u00b7 2nd Statistics and Data Science @ UCLA "
  "Connect Kijoo Song \u00b7 3rd UCLA Message Zufan Wu \u00b7 3rd UCLA Message Show all Explore Premium "
  "profiles Victor C. \u00b7 3rd Senior Softwar. End quote.")
-_saved = prompt
-prompt = prompt.replace(subs["dossier"], CONTAM)
-STRANGERS=["emma","aaron","teng","kijoo","zufan","victor","mckinsey","sharpe"]
-t=[{"role":"user","content":"What do you know about me?"}]
-r=ask(t); tu=[c for c in r.get("content",[]) if c["type"]=="tool_use"]
+
+EMPTY_TOOL = ("No research is on file for this call, so nothing specific can be "
+              "claimed about this person.")
+
+
+def after_empty_tool(dossier: str, question: str) -> str:
+    """Ask a question, force the tool to come back empty, return what it then says."""
+    global prompt
+    prompt = BASE_PROMPT.replace(subs["dossier"], dossier)
+    t = [{"role": "user", "content": question}]
+    r = ask(t)
+    tu = [c for c in r.get("content", []) if c["type"] == "tool_use"]
+    if not tu:
+        prompt = BASE_PROMPT
+        return ""
+    t.append({"role": "assistant", "content": r["content"]})
+    t.append({"role": "user", "content": [
+        {"type": "tool_result", "tool_use_id": tu[0]["id"], "content": EMPTY_TOOL}]})
+    r2 = ask(t)
+    prompt = BASE_PROMPT
+    return " ".join(c["text"] for c in r2.get("content", []) if c["type"] == "text").strip()
+
+
+def check(label: str, said: str, must_have=(), must_not=()) -> bool:
+    low = said.lower()
+    bad = [w for w in must_not if w in low]
+    good = (not must_have) or any(w in low for w in must_have)
+    ok = good and not bad and bool(said)
+    print(f"  [{'PASS' if ok else 'FAIL'}] {label}")
+    if bad:
+        print(f"         LEAKED: {bad}")
+    if not said:
+        print("         no tool call to feed - cannot evaluate")
+    print(f"         says: {said[:180]!r}")
+    return ok
+
+
+# 1. Tool empty, dossier REAL. This is what the live call will hit: the guest
+#    root has no Prospect, so answer_from_graph returns nothing while the real
+#    research sits in the prompt via variableValues. It must use it, not bail.
+results.append(check(
+    "tool empty BUT dossier present -> answer from dossier, do not bail",
+    after_empty_tool(subs["dossier"], "So how does this actually help me?"),
+    must_have=("chasing leads", "never reply", "scheduling bot", "losing hours"),
+    must_not=("don't want to guess", "dont want to guess", "cannot say")))
+
+# 2. Tool empty AND dossier empty. Nothing anywhere - now a claim about this
+#    person would be invention, so it has to admit it.
+results.append(check(
+    "tool empty AND dossier empty -> must admit, not invent",
+    after_empty_tool("", "What do you know about me?"),
+    must_have=("guess", "not sure", "don't have", "honestly", "can't say"),
+    must_not=("linkedin", "github", "you wrote", "you built", "you posted")))
+
+# 3. Dossier CONTAMINATED, in the prompt and in the tool result. It must speak
+#    only Becky's own facts and none of the sidebar strangers.
+_p = BASE_PROMPT.replace(subs["dossier"], CONTAM)
+prompt = _p
+t = [{"role": "user", "content": "What do you know about me?"}]
+r = ask(t)
+tu = [c for c in r.get("content", []) if c["type"] == "tool_use"]
 if tu:
-    t.append({"role":"assistant","content":r["content"]})
-    t.append({"role":"user","content":[{"type":"tool_result","tool_use_id":tu[0]["id"],"content":CONTAM}]})
-    r=ask(t)
-said=" ".join(c["text"] for c in r.get("content",[]) if c["type"]=="text").strip()
-leaked=[x for x in STRANGERS if x in said.lower()]
-print(f"  [{'PASS' if not leaked else 'FAIL'}] contaminated quote -> must not speak strangers' names")
-if leaked: print(f"         LEAKED: {leaked}")
-print(f"         says: {said[:170]!r}")
-results.append(not leaked)
-prompt = _saved
+    t.append({"role": "assistant", "content": r["content"]})
+    t.append({"role": "user", "content": [
+        {"type": "tool_result", "tool_use_id": tu[0]["id"], "content": CONTAM}]})
+    r = ask(t)
+said = " ".join(c["text"] for c in r.get("content", []) if c["type"] == "text").strip()
+prompt = BASE_PROMPT
+results.append(check(
+    "contaminated quote -> must not speak strangers' names",
+    said,
+    must_not=("emma", "aaron", "teng", "kijoo", "zufan", "victor", "mckinsey", "sharpe")))
 
 print(f"\n{sum(results)}/{len(results)} passed")
