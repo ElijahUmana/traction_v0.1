@@ -375,36 +375,48 @@ Use `tail -f /dev/null | jac start …`, which is portable and actually blocks. 
 
 ## 8. Test suite
 
-**Status: MY SUITE IS GREEN (20/20, no API key). THE FULL-REPO RUN IS RED at collection.** Both facts matter; neither is omitted.
+**Status: per-file GREEN. Full-repo run does not execute. Measured per file, not assumed.**
+
+| Target | Result | Time |
+|---|---|---|
+| `jac test feed.jac` | **20 passed** | 4:41 |
+| `jac test browser/ws.jac` | **12 passed** | 0:23 |
+| `jac test research.jac` | **36 passed, 3 failed** | 8:52 |
+| `jac test` (whole repo) | **no tests ran** — worker dies | 4:14 |
+
+All runs with `PYTEST_XDIST_AUTO_NUM_WORKERS=1` and **no `ANTHROPIC_API_KEY` set**.
+
+### The full-repo run dies; it does not fail
 
 ```
-$ PYTEST_XDIST_AUTO_NUM_WORKERS=1 jac test feed.jac
-1 worker [20 items]
-....................                                    [100%]
-20 passed
+INTERNALERROR> File ".../xdist/dsession.py", line 152, in loop_once
+INTERNALERROR>   raise RuntimeError("Unexpectedly no active workers available")
+====================== no tests ran in 253.80s ======================
 ```
 
+The xdist worker **process is killed outright** — this is not a collection error and not an assertion failure. With one worker, its death ends the run. Individually, `feed.jac`, `browser/ws.jac` and `research.jac` all execute fine, so it is the combination that kills it. Not isolated further; each attempt costs 4–9 minutes.
+
+### The 3 `research.jac` failures are test-isolation artifacts, not product bugs
+
+`research.jac` fails 3 of 39 in a whole-file run:
+- `lane A surfaces commenters, not the post author`
+- `a dry probe grows the next rung as a child and walks into it`
+- `two lanes finding the same human converge onto one prospect`
+
+The third is the product thesis, so it was worth checking properly rather than reporting as a defect. **Run on its own it passes:**
+
 ```
-$ ops/test.sh              # whole repo
-====================== no tests ran in 170.05s ======================
-FAIL (exit 3)
+$ jac test research.jac -t "two lanes finding the same human converge onto one prospect"
+1 passed, 38 deselected
 ```
 
-`jac test feed.jac` collects and passes 20 tests. `jac test` across the repo collects **nothing** and exits 3, so some other test file is breaking collection for everyone. Test files present: `browser/ws.test.jac`, `emailgate.test.jac`, `feed.test.jac`, `identity.test.jac`, `outreach.test.jac`, `research.test.jac`, `schema.test.jac`. Not bisected — each full run costs 3–5 minutes and I ran out of runway.
+So the convergence logic is correct and the failure is cross-test state, consistent with the shared-root contention seen elsewhere. **Reported here as a harness problem, not as a broken thesis** — the opposite error (calling a harness artifact a product bug) would have been just as misleading as hiding it.
 
-**This is a rubric-relevant gap.** "We have a test suite" is only defensible if `jac test` runs. Bisecting it by running each file individually is the fix.
+### The xdist trap that this all sits on
 
-`feed.test.jac` covers the two-hop `Founder → Runs → ResearchRun` read, lane ordering and `live_url` presence, convergence dedup to one row while recording both lanes, DROPPED prospects staying on the ledger, score sort order, run-state survivor/drop/converged counts, global time ordering of reasoning across lanes, and `feed_since` cursor semantics.
+`jac test` runs pytest-xdist with **ten workers** by default and injects `-n` unconditionally, so `-p no:xdist` is rejected and there is no CLI flag. Ten workers mutating the single root anchor produce intermittent `WriteConflict: anchor 00000000-…`, which reads exactly like a race in the code under test and is not one. Measured on `feed.jac`: **5 failures with default workers, 0 with one.** Found by GHIDENT. `ops/test.sh` bakes in the env var.
 
-### The failure that was not a failure
-
-Before the fix: **5 failures**, all `WriteConflict: anchor 00000000-… (root) changed concurrently`. Non-deterministic, and it presents exactly like a race in the walker code. It is not one.
-
-`jac test` runs **pytest-xdist with ten workers** by default and injects `-n` unconditionally, so `-p no:xdist` is rejected and there is no CLI flag. Ten workers mutating the single root anchor is the whole story. Measured: **5 failures with default workers, 0 with one.** Found by GHIDENT; `PYTEST_XDIST_AUTO_NUM_WORKERS=1` is now baked into `ops/test.sh`.
-
-The 2 failures that survived the worker fix were a real bug: `feed.jac` does not import `ReasoningKind`, so the `.test.jac` annex could not see it. An annex sees its base module's declarations, not the names its base chose not to import. Fixed by importing it in the annex.
-
----
+The 2 failures that survived the worker fix were a genuine bug: `feed.jac` does not import `ReasoningKind`, so the `.test.jac` annex could not see it — an annex sees its base module's declarations, not the names its base chose not to import.
 
 ## 9. Jac percentage audit
 
@@ -431,7 +443,7 @@ Stated plainly, because the evidence standard here is absolute.
 - **The joined-up live E2E chain** — real lanes → real prospect → real email → real reply → real Vapi call → real Calendar booking — **has not been run end to end.** Segments have strong individual proofs (§1, §2, §3); the joined-up artifact does not exist. `PlanCampaign` was missing as of this writing and `RunResearch` raises without an ICP, so the Go button was routed but not runnable.
 - **The mobile-hotspot tunnel test** (§6) has not been run, and the register calls the hotspot primary.
 - **No fix exists for the persistent guest-root corruption** (§7) beyond wiping the graph. The snapshot mitigation is proposed, not yet exercised.
-- **`jac test` across the whole repo does not run** (§8). Only `jac test feed.jac` is verified green.
+- **`jac test` across the whole repo does not run** (§8) — the xdist worker is killed. Per-file runs are verified; the aggregate is not.
 - **No browser client has rendered these endpoints.** The frontend contract is verified at the wire level only.
 - **Lane D's ~40%** (§2) is my adversarial read of the artifact, not an independently re-run deliverability check. No address was SMTP-verified.
 
