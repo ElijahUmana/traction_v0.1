@@ -64,9 +64,33 @@ glob PROFILE_JS: str = """
     }
   }
 
+  // Section headers AND the sidebar markers. The sidebar ones are load-bearing:
+  // section() walks innerText forward until it meets a stop, so when no section
+  // header follows About -- which depends entirely on how much of the profile is
+  // filled in -- it runs straight on into "More profiles for you" and swallows
+  // the recommended-people rail. That put SIX named strangers and their
+  // employers (Emma Wu - DE @ Meta, Emma Teng - SSBA @ McKinsey, Aaron Teng,
+  // Kijoo Song, Zufan Wu, Victor C.) inside the warm lead's About evidence,
+  // attributed to her, with her profile URL as the source. The dashboard
+  // renders that string and the model is handed it as "what she wrote".
   const STOPS = ['About','Experience','Education','Activity','Skills','Interests',
                  'Licenses & certifications','Projects','Honors & awards',
-                 'Recommendations','People you may know','Volunteering'];
+                 'Recommendations','People you may know','Volunteering',
+                 'More profiles for you','Explore Premium profiles','Show all',
+                 'People also viewed','More profiles','Promoted',
+                 'Interested in','You might like'];
+  // A marker is not always its own line, so the assembled text is cut at the
+  // earliest one as well. Line-level stops alone are not enough.
+  const CUTS = ['More profiles for you','Explore Premium profiles','Show all',
+                'People also viewed','Promoted','Interested in','You might like'];
+  const cutChrome = (text) => {
+    let end = text.length;
+    for (const c of CUTS) {
+      const i = text.indexOf(c);
+      if (i >= 0 && i < end) { end = i; }
+    }
+    return text.slice(0, end).trim();
+  };
   const section = (label) => {
     const start = lines.indexOf(label);
     if (start < 0) return '';
@@ -76,7 +100,7 @@ glob PROFILE_JS: str = """
       out.push(lines[j]);
       if (out.join(' ').length > 1400) break;
     }
-    return out.join(' ').trim();
+    return cutChrome(out.join(' ').trim());
   };
 
   // innerText ONLY, deliberately.
