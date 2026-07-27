@@ -211,8 +211,23 @@ def report(call: dict) -> int:
         print(f"[{start(m):6.2f}] {role:16s} {text[:160]}")
 
     # ---- time to first word -------------------------------------------------
+    # secondsFromStart counts from call CREATION, which includes ringing - on
+    # call 019fa100 that made the agent's opener look like 21.33s of dead air
+    # when the phone had simply been ringing for nineteen of them. What matters
+    # is how long the human waited AFTER the line opened, so this measures from
+    # the first human audio when there is any, and falls back to the raw offset
+    # (flagged) when the agent spoke into silence.
     first_bot = next((m for m in convo if m.get("role") == "bot"), None)
-    ttfw = start(first_bot) if first_bot else None
+    first_user = next((m for m in convo if m.get("role") == "user"), None)
+    ttfw = None
+    ttfw_note = ""
+    if first_bot is not None:
+        if first_user is not None and start(first_user) < start(first_bot):
+            ttfw = start(first_bot) - end(first_user)
+            ttfw_note = f"after the human's first words ({start(first_user):.2f}s in)"
+        else:
+            ttfw = start(first_bot)
+            ttfw_note = "from call creation - INCLUDES RINGING, not a latency figure"
 
     # ---- turn latency: human stops -> agent starts ---------------------------
     turns = []
@@ -250,7 +265,8 @@ def report(call: dict) -> int:
     print("=" * 72)
     print(f"ended reason        : {call.get('endedReason')}")
     print(f"duration            : {call.get('endedAt') and round(float(call.get('costBreakdown', {}).get('total', 0)), 4)} USD")
-    print(f"time to first word  : {ttfw:.2f}s" if ttfw is not None else "time to first word  : n/a")
+    print(f"time to first word  : {ttfw:.2f}s  ({ttfw_note})" if ttfw is not None
+          else "time to first word  : n/a")
     if turns:
         vals = sorted(t[0] for t in turns)
         print(f"turn latency        : n={len(vals)}  "

@@ -68,11 +68,28 @@ SQLITE="$( [ -x /usr/bin/sqlite3 ] && echo /usr/bin/sqlite3 || command -v sqlite
 # So ask the filesystem who has the store open rather than guessing from process
 # names. This catches `jac run` and `jac test`, which a pkill on "jac start"
 # never would.
+# Two detectors, because neither alone is sufficient.
+#
+#  (1) by FILE - lsof on each db. Catches any process, jac or not.
+#      Blind spot: a file that has been DELETED but is still open is invisible
+#      to `lsof -- <path>` AND to `lsof +D <dir>` (both verified on this box).
+#      That is exactly the state a botched repair leaves behind: users.db held
+#      open by a live server but gone from the directory listing.
+#
+#  (2) by CWD - every live jac process whose working directory IS this one.
+#      This is what covers the blind spot: anchor_store.db resolves relative to
+#      CWD, so a jac process sitting in this directory owns this data dir no
+#      matter which files still have names.
 data_dir_holders() {
-  local exclude="${1:-}" f pids=""
+  local exclude="${1:-}" f pid cwd here pids=""
+  here="$(pwd -P)"
   for f in "$DATA/anchor_store.db" "$DATA/users.db" "$DATA/main.db"; do
-    [ -f "$f" ] || continue
+    [ -e "$f" ] || continue
     pids="$pids $(lsof -t -- "$f" 2>/dev/null || true)"
+  done
+  for pid in $(pgrep -f 'jac (start|run|test)' 2>/dev/null || true); do
+    cwd="$(lsof -a -p "$pid" -d cwd -Fn 2>/dev/null | sed -n 's/^n//p' | head -1)"
+    [ "$cwd" = "$here" ] && pids="$pids $pid"
   done
   # shellcheck disable=SC2086
   printf '%s\n' $pids | sort -u | grep -v '^$' | grep -vx "$exclude" || true
@@ -165,6 +182,27 @@ guest_root_is_orphaned() {
 # lost: every TRACTION endpoint is anonymous (walker:pub on the guest graph), so
 # there are no real accounts in users.db to preserve.
 repair_guest_root() {
+  # NEVER unlink a db file out from under a live process. Deleting users.db
+  # while a server holds it open is not a repair - it is how this corruption is
+  # MANUFACTURED: the process keeps writing to an unlinked inode while the next
+  # boot creates a fresh users.db, and the guest root recorded in one no longer
+  # exists in the other. FRONTEND caught a server in exactly that state (pid
+  # 27391 holding .jac/data/users.db while `ls .jac/data/` did not list it).
+  #
+  # The caller checks this too, but the check belongs HERE as well: this
+  # function is reached from two paths, and the smoke-gate path arrives right
+  # after a kill whose success was never verified. A destructive operation must
+  # not depend on its caller having been careful.
+  local holders
+  holders="$(data_dir_holders "$$" | tr '\n' ' ')"
+  if [ -n "${holders// /}" ]; then
+    echo "    !! REFUSING TO REPAIR - $DATA is still open by:"
+    # shellcheck disable=SC2086
+    describe_pids $holders
+    echo "       Deleting users.db now would CREATE the divergence, not fix it."
+    echo "       Stop those processes first, then re-run."
+    return 1
+  fi
   echo "    !! .jac/data is divergent: users.db points the guest at a root that"
   echo "       anchor_store.db does not contain. Left alone, EVERY request would"
   echo "       500 with the _lock AttributeError described at the top of this file."
@@ -174,7 +212,10 @@ repair_guest_root() {
 
 echo "==> guest-root preflight"
 if guest_root_is_orphaned; then
-  repair_guest_root
+  if ! repair_guest_root; then
+    echo "!! cannot safely repair a data dir that is in use - refusing to start."
+    exit 1
+  fi
 else
   echo "    consistent (or nothing to check yet)"
 fi
@@ -199,7 +240,17 @@ start_server() {
   #     `tail -f /dev/null` is portable and actually blocks.
   #
   # Do not "simplify" either half of this.
-  nohup sh -c "tail -f /dev/null | jac start main.jac --no-client -p $PORT" \
+  # REDIS_URL is consumed by jaclang's scale layer -
+  # scale/config/impl/config_loader.impl.jac:213 reads it straight from the env
+  # into the database config, and redis_l1_invalidation_enabled defaults to
+  # True - so a REDIS_URL pointing at a REMOTE instance puts a network round
+  # trip on a cache path during concurrent writes. OUTREACH measured the
+  # difference: the same 20-concurrent burst against the same fresh store
+  # corrupted the guest root every time with it set, and 0 _lock errors with it
+  # unset. It is nothing to do with why _lock is MISSING (that is unconditional,
+  # see the header) - it is about what makes the store DIVERGE in the first
+  # place. Unsetting it costs nothing here; the app never uses Redis.
+  nohup sh -c "unset REDIS_URL; tail -f /dev/null | jac start main.jac --no-client -p $PORT" \
     > "$LOG" 2>&1 &
 
   # READINESS IS A REAL ENDPOINT, NEVER /healthz.
@@ -352,8 +403,17 @@ else
     echo "       the preflight. Repairing and restarting ONCE."
     pkill -9 -f "jac start main.jac --no-client -p $PORT" 2>/dev/null || true
     lsof -ti tcp:"$PORT" 2>/dev/null | xargs -r kill -9 2>/dev/null || true
-    sleep 3
-    repair_guest_root
+    # WAIT for it to actually be gone. `sleep 3` and hope is what let a repair
+    # race a still-live server; repair_guest_root now refuses in that case, but
+    # do not rely on the last line of defence for something we can just check.
+    for _ in $(seq 1 20); do
+      [ -z "$(data_dir_holders "$$" | tr -d '[:space:]')" ] && break
+      sleep 0.5
+    done
+    if ! repair_guest_root; then
+      echo "!! could not clear $DATA - not repairing. Do NOT demo against this server."
+      tail -30 "$LOG"; exit 1
+    fi
     if ! start_server; then
       echo "!! server never became healthy after repair - see $LOG"; tail -30 "$LOG"; exit 1
     fi

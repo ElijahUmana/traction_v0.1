@@ -16,10 +16,13 @@ OUT = "/tmp/traction-evidence"
 def call(path, body, tries=4):
     """POST with retry.
 
-    The FIRST anonymous request after a cold start can 500 with
-    `'JacScaleUserManager' object has no attribute '_lock'` - a race in the
-    guest-root/user-manager init. It succeeds on retry. Observed on jac 0.34.7;
-    this is why ops/warmup.sh exists.
+    Retries cover ordinary transient failures only.
+
+    They do NOT cover the `'JacScaleUserManager' object has no attribute
+    '_lock'` 500. That one NEVER recovers - measured 6/6 failures 0.6s apart.
+    It means the guest root in users.db disagrees with anchor_store.db, which
+    happens when a data dir is wiped under a live process or two servers share
+    one checkout. Retrying is the wrong response; see docs/RUNBOOK.md.
     """
     last = None
     for attempt in range(tries):

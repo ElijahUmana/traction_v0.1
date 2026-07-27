@@ -136,13 +136,18 @@ results.append(check(
     must_have=("chasing leads", "never reply", "scheduling bot", "losing hours"),
     must_not=("don't want to guess", "dont want to guess", "cannot say")))
 
-# 2. Tool empty AND dossier empty. Nothing anywhere - now a claim about this
-#    person would be invention, so it has to admit it.
+# 2. Tool empty AND dossier empty - the degenerate case. The rule changed after
+#    call 019fa100: declining is now banned outright, because the agent said
+#    "Honestly, I don't wanna guess at that. Let me get you time with Elijah"
+#    while holding her full dossier, and that was the worst moment of the call.
+#    So even with nothing to go on it must keep talking about the PRODUCT and
+#    push for the booking - what it must never do is invent a fact about her.
 results.append(check(
-    "tool empty AND dossier empty -> must admit, not invent",
+    "nothing anywhere -> must not invent, must not decline either",
     after_empty_tool("", "What do you know about me?"),
-    must_have=("guess", "not sure", "don't have", "honestly", "can't say"),
-    must_not=("linkedin", "github", "you wrote", "you built", "you posted")))
+    must_not=("don't want to guess", "dont want to guess", "want to be accurate",
+              "he'll answer", "one moment", "give me a moment", "can't answer",
+              "you wrote", "you built", "you posted")))
 
 # 3. Dossier CONTAMINATED, in the prompt and in the tool result. It must speak
 #    only Becky's own facts and none of the sidebar strangers.

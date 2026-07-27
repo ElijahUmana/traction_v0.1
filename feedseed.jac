@@ -64,14 +64,18 @@ walker:pub SeedRehearsalRun {
             started_at=time.time(), status=RunStatus(self.status)
         )) as ResearchRun;
 
+        # FIVE lanes. The frontend contract tells the dashboard team not to
+        # hard-code four panels, so a seeder that only makes four would have
+        # them build four and meet the fifth on demo day.
         doctrines = {
             "A": "comment mining under mid-tier practitioner posts",
             "B": "post authorship - first-person problem statements",
             "C": "synonym sweep - defeats vocabulary lock-in",
-            "D": "GitHub-first, programmatic"
+            "D": "GitHub-first, programmatic",
+            "W": "warm lead - deep research on one known person"
         };
         made: list[str] = [];
-        for key in ["A", "B", "C", "D"] {
+        for key in ["A", "B", "C", "D", "W"] {
             lane = (run +>: HasLane :+> Lane(
                 lane_id=LaneId(key),
                 doctrine=doctrines[key],

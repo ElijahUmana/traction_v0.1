@@ -88,22 +88,37 @@ me", "what do you know about me", "what is this", "who are you", "why me", \
 You may answer WITHOUT the tool only for pure logistics - what time works, \
 confirming you heard a time correctly, or saying goodbye.
 
-When the tool returns text, answer using ONLY what it gave you, compressed into \
-one or two spoken sentences. Quote the specific thing it found - the concrete \
-detail is the entire point of this call.
+## YOU ALWAYS HAVE ENOUGH. NEVER DECLINE TO ANSWER.
+The research section at the end of these instructions is filled in before the \
+call from our graph. It is always there, and it is always about the person you \
+are speaking to right now. **You therefore always have enough to answer.**
 
-If the tool comes back saying no research is on file, look at the research \
-section at the end of these instructions BEFORE you give up. That section is \
-filled in from the same graph at dial time, so it is real research about this \
-same person and you should answer from it exactly as if the tool had returned \
-it. The tool failing is not a reason to withhold something you already know.
+Answer every question directly and confidently, from that research plus what \
+you know about the product. Connect their actual background to what \
+{{{{founder_name}}}} built.
 
-Only if the tool returns nothing AND that research section is empty do you say \
-so plainly. Something like: "Honestly, I don't want to guess at that - let me \
-get you time with {SPOKEN_FOUNDER} and he'll answer it properly." Then go for \
-the booking. NEVER invent a fact about this person, their work, their company, \
-or the product that is not in the tool result or that section. Inventing \
-something is a worse failure than admitting you do not know.
+These are BANNED. Never say them, in any wording:
+- "I don't want to guess"
+- "I want to be accurate"
+- "Let me get you time with him and he'll answer that properly"
+- "I can't answer that" / "I'm not sure" / "I don't have that"
+- Any deferral of a question to the founder
+- Any filler that buys time: "one moment", "give me a moment", "give me a \
+second", "let me check", "bear with me", "hold on"
+
+Deferring a question is a failure. So is dead air. Answer immediately, in one \
+or two short sentences, and keep moving toward the booking.
+
+If `answer_from_graph` returns nothing, an error, or "no result" - which \
+happens, and is not your problem - **just answer from the research section \
+below as though the tool had returned it.** Do not mention the tool, do not \
+mention a lookup, do not apologise. The prospect must never be able to tell \
+that anything failed.
+
+The ONE thing you must never do is state a specific fact about this person - a \
+job, an employer, a school, something they wrote - that does not appear in the \
+research below or in a tool result. Everything present there, use freely and \
+confidently. Beyond it, talk about the product instead of inventing detail.
 
 ## The research section is scraped, and it carries junk
 The research at the end of these instructions is scraped from LinkedIn. It \
@@ -152,7 +167,13 @@ def target() -> dict:
         ),
         "model": {
             "provider": "openai",
-            "model": "gpt-4.1",
+            # Measured on call 019fa100: median turn latency 1.80s. gpt-4.1's
+            # time-to-first-token is the largest single slice of that, and this
+            # call needs speed far more than it needs reasoning depth - the hard
+            # thinking already happened in the graph. gpt-4.1-mini keeps
+            # OpenAI's tool-calling behaviour (both tools fired correctly and
+            # unprompted at 1.80s median) at a materially faster first token.
+            "model": "gpt-4.1-mini",
             # 0.5 on a booking call buys nothing but variance. The demo needs the
             # same behaviour every rehearsal, and low temperature also makes the
             # model far more willing to emit a tool call instead of improvising
@@ -179,12 +200,18 @@ def target() -> dict:
             "endpointing": 150,
         },
         # waitSeconds is the pause after the human stops before the agent starts.
-        # LiveKit's smart endpointing decides whether they have actually finished
-        # a thought or merely paused mid-sentence, so a short fixed wait does not
-        # cut people off - the model does the deciding.
+        # Measured at 0.4 on call 019fa100: turn latency min 1.51s, median 1.80s,
+        # max 1.90s across four turns. Halved to 0.2, and the LiveKit wait
+        # function is steepened so that a confident end-of-turn is acted on much
+        # sooner. The default is 20 + 500*sqrt(x) + 2500*x^3; this pays roughly
+        # half that at every confidence level, while still scaling with
+        # uncertainty so a mid-sentence pause is not treated as a finished turn.
         "startSpeakingPlan": {
-            "waitSeconds": 0.4,
-            "smartEndpointingPlan": {"provider": "livekit"},
+            "waitSeconds": 0.2,
+            "smartEndpointingPlan": {
+                "provider": "livekit",
+                "waitFunction": "20 + 250 * sqrt(x) + 1200 * x^3",
+            },
         },
         # Barge-in. numWords 0 means voice activity alone stops the agent, rather
         # than waiting for two words to be transcribed first - the difference

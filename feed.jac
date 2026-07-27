@@ -276,6 +276,29 @@ def:pub get_run_state -> RunStateView {
 }
 
 
+
+"""Coerce whatever arrived on the wire into a usable cursor.
+
+`since` is declared `int`, but the runtime does NOT apply the declared default
+when the field is ABSENT from the body - it arrives as a str or None and the
+first `>=` blows up with "'>=' not supported between 'int' and 'str'". That
+matters because `{}` and `{"since": undefined}` are two of the most ordinary
+ways a frontend calls this (JSON.stringify drops undefined keys, and the
+contract doc's own helper defaults args to `{}`). Never let the primary data
+path 500 on an empty body.
+"""
+def _cursor(raw: any) -> int {
+    if raw is None {
+        return 0;
+    }
+    try {
+        return int(raw);
+    } except Exception {
+        return 0;
+    }
+}
+
+
 """One fresh snapshot of everything the dashboard renders.
 
 This is the endpoint the pump polls. It is a plain HTTP function on purpose -
@@ -283,11 +306,12 @@ that is the only path in jac 0.34.7 that reliably observes writes made by other
 request contexts (the research lanes). Pass the `next_seq` from the previous
 response as `since` to receive only newly-emitted reasoning.
 """
-def:pub feed_since(since: int = 0) -> FeedBatch {
+def:pub feed_since(since: any = 0) -> FeedBatch {
+    cursor = _cursor(since);
     all_r = _all_reasoning();
-    fresh: list[ReasoningView] = [r for r in all_r if r.seq >= since];
+    fresh: list[ReasoningView] = [r for r in all_r if r.seq >= cursor];
     return FeedBatch(
-        seq=since,
+        seq=cursor,
         next_seq=len(all_r),
         reasoning=fresh,
         lanes=_lane_views(),
@@ -338,8 +362,9 @@ The graph read happens HERE, in the enclosing body, which still runs inside the
 request context. `stream` then closes over that snapshot. Reading the graph
 inside the generator instead returns an EMPTY root - measured, not assumed.
 """
-def:pub feed_backlog(since: int = 0) -> Generator {
-    snapshot = [r for r in _all_reasoning() if r.seq >= since];
+def:pub feed_backlog(since: any = 0) -> Generator {
+    cursor = _cursor(since);
+    snapshot = [r for r in _all_reasoning() if r.seq >= cursor];
     lanes = _lane_views();
 
     def stream -> Generator[dict, None, None] {
