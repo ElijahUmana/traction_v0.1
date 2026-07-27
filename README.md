@@ -1,123 +1,385 @@
+<div align="center">
+
 # TRACTION
 
-**A founder describes what they're building. Four agents fan out across LinkedIn and GitHub in parallel, converge on the same three humans from opposite directions, prove each one is reachable, write them a personal email citing what they actually said, call them when they reply, answer their objections from a knowledge graph, and book the interview mid-call — and every layer of it, down to the WebSocket frames, is Jac.**
+### Autonomous beta-tester acquisition, built in Jac.
 
-JacHacks SF 2026 · Founders, Inc. Fort Mason
+**Five agents fan out across LinkedIn and GitHub in parallel, converge on the same humans from opposite directions, then email, call, and book them — live, on a persistent graph.**
 
----
+`22,172 lines of Jac` · `100% Jac in the product path` · `16 nodes` · `15 typed edges` · `30 walkers` · `14 byLLM abilities`
 
-## Who this is for
+*JacHacks SF 2026 · Founders, Inc., Fort Mason*
 
-Not "founders" as a market. **One founder, this week**, who needs three beta testers and is cold-DMing strangers at a 1% reply rate. TRACTION finds the three people who already said, in public, that they have the problem — and gets one of them on a call.
-
-The demo names that person, emails that person, calls that person, and books that person. Live.
+</div>
 
 ---
 
-## WHERE JAC RUNS
+## The problem, stated as one person
 
-> The rubric asks us to point at it in the repo. Here is the map.
->
-> **Product code is 96.3% Jac — 22,254 lines of `.jac`.** The only non-Jac line in the product path is `becky_ui/styles.global.css` (862 lines of stylesheet for the dashboard); every walker, archetype, endpoint, and the entire browser/WebSocket/CDP stack is Jac. Including operational tooling (`ops/`: test harnesses, proof scripts, run plumbing — none of which ships) the repo is 84.0% Jac. Verify both numbers yourself with `ops/jac_audit.sh`; it prints them and shows its method.
+A founder shipped something last week. They need ten people who actually have the problem they're solving — not a market, ten humans.
 
-| Layer | Where Jac does the work | File |
+So they open LinkedIn, read a comment, guess at someone's GitHub handle, hope it's the same person, write an email that sounds like every other cold email, and get ignored. That is the first month of a startup, spent on tab-switching.
+
+**Those people have already told you they have the problem.** They complained about it in a LinkedIn comment. They filed an issue about it on GitHub. The signal is public — it is just split across two platforms that do not know about each other.
+
+TRACTION's thesis is therefore a claim about identity: **if you can find the same human independently from two directions, you know something real about them.**
+
+That claim is not a feature layered on top of a data model. It *is* the data model — one graph traversal.
+
+---
+
+## What it does
+
+```mermaid
+flowchart LR
+    F["Founder<br/>repo + one paragraph"] --> P["PlanCampaign<br/><i>by llm()</i>"]
+    P --> R{{"RunResearch<br/><b>flow / wait</b>"}}
+
+    R --> A["Lane A<br/>comment mining"]
+    R --> B["Lane B<br/>first-person posts"]
+    R --> C["Lane C<br/>synonym sweep"]
+    R --> D["Lane D<br/>GitHub API"]
+    R --> W["Lane W<br/>warm lead"]
+
+    A --> X["CrossLink<br/>LinkedIn ⇄ GitHub"]
+    B --> X
+    C --> X
+    D --> X
+    W --> X
+
+    X --> E["ResolveEmail<br/>6-step waterfall"]
+    E --> K["RankAndSelect<br/>convergence multiplier"]
+    K --> O["ComposeOutreach<br/>grounding gate"]
+    O --> S["SendOutreach<br/>AgentMail"]
+    S --> V["ScheduleCall<br/>Vapi"]
+    V --> M["BookInterview<br/>Google Calendar"]
+    M --> I["OnCallEnd<br/>Insight nodes"]
+    I -.->|"informs the next run"| P
+
+    style R fill:#1a4d2e,color:#fff
+    style X fill:#1a4d2e,color:#fff
+    style K fill:#1a4d2e,color:#fff
+    style V fill:#7c2d12,color:#fff
+    style M fill:#7c2d12,color:#fff
+```
+
+Give it your repo, a paragraph on what you're building, and optionally one warm lead:
+
+1. **`PlanCampaign`** turns the paragraph into a searchable hypothesis — keywords, pain phrases, and *negative* keywords so vendors selling the solution never surface as people who have the problem.
+2. **Five lanes launch in parallel.** Three drive real Chrome browsers on LinkedIn with different doctrines. One works GitHub programmatically. One deep-researches the named warm lead.
+3. **Lanes cross-link asymmetrically** — heavy in one direction, light in the other.
+4. **The email gate is a hard filter**, not a score. Anyone unreachable is dropped visibly, with a written reason.
+5. **Convergence scores what matters.** A prospect surfaced by two independent lanes gets a multiplier.
+6. **`ComposeOutreach` quotes their own words back** — and refuses to send if it cannot prove the quote is grounded in stored evidence.
+7. **When they reply, an AI calls them**, answers their questions from the graph mid-call, and books the meeting with a Google Meet link on both calendars.
+
+---
+
+## Where Jac runs
+
+**The graph is the product.** Not a persistence layer beneath the product — the product.
+
+```mermaid
+graph TB
+    subgraph SCHEMA["schema.jac — 16 nodes, 15 typed edges"]
+        FO["Founder"] -->|"Targets"| ICP["ICP"]
+        FO -->|"Runs"| RUN["ResearchRun"]
+        FO -->|"HasWarmLead"| PR["Prospect"]
+        RUN -->|"HasLane"| LN["Lane"]
+        LN -->|"Emitted"| RE["Reasoning"]
+        LN -->|"Probe"| SP["SearchProbe"]
+        SP -->|"Widened"| SP2["SearchProbe"]
+        LN -->|"Surfaced<br/>at_rank, query"| PR
+        PR -->|"HasEvidence<br/>lane, confidence"| EV["Evidence"]
+        PR -->|"Identity<br/>tier, basis"| ID["IdentityProfile"]
+        PR -->|"Outreach"| ET["EmailThread"]
+        ET -->|"GotReply"| RP["ReplyEvent"]
+        PR -->|"Called"| CS["CallSession"]
+        CS -->|"Learned"| IN["Insight"]
+        PR -->|"Booked"| BK["Booking"]
+    end
+
+    style PR fill:#1a4d2e,color:#fff
+    style LN fill:#1a4d2e,color:#fff
+    style EV fill:#374151,color:#fff
+```
+
+### The convergence query is one line
+
+The closing shot — *"this human was found independently from two directions"* — is a traversal back up the `Surfaced` edges:
+
+```jac
+lanes_that_found_them = [p <-:Surfaced:<- [?:Lane]];
+if len(lanes_that_found_them) > 1 {
+    p.score *= CONVERGENCE_MULTIPLIER;   # 0.71 -> 0.94
+}
+```
+
+In a relational store that is a join plus a `GROUP BY` plus a dedupe pass. Here the score multiplier falls out of the shape of the graph.
+
+### The dry-branch ladder is graph structure, not an if-chain
+
+When a search angle goes dry, the walker **grows a child node and visits it**. The traversal deepens exactly where the search struggled — so the search tree, dead branches included, is a graph fact you can render with `printgraph`, not a log line:
+
+```jac
+if not yielded {
+    wider = here +>:Widened(because="dry"):+> SearchProbe(
+        rung=here.rung + 1, move="widen_date_window",
+        reason="nine queries run, nothing kept - widening rather than reporting zero"
+    );
+    visit wider;
+}
+```
+
+This is what makes these walkers genuine traversal rather than RPC in walker costume.
+
+### Real parallelism with `flow` / `wait`
+
+Five lanes, five threads, one barrier. Measured: four 0.6 s tasks complete in **0.60 s wall clock**, and lane intervals are asserted to *overlap* rather than merely finish fast.
+
+```jac
+futures = [flow run_lane(x.node, x.lane_id, ctx, hypothesis,
+                         x.phrases_json, offline, x.fixture_json, deadline)
+           for x in [spec]];
+results = [wait f for f in futures];
+```
+
+### `by llm()` with `sem` — 14 abilities, 156 semantic annotations
+
+Jac's LLM binding is typed. You declare the return object and annotate it; the language handles the call, the schema, and the retry:
+
+```jac
+obj CommentVerdict {
+    has index: int;
+    has is_pain: bool = False;
+    has is_vendor: bool = False;
+    has relevance: float = 0.0;
+}
+sem CommentVerdict.is_pain = "True only if the author is describing a difficulty
+    they themselves are experiencing, in the first person. Congratulation,
+    agreement, and abstract commentary are all False.";
+
+def classify_texts(hypothesis: str, texts: list[str]) -> list[CommentVerdict] by llm();
+```
+
+### `walker:pub` is the integration surface — zero routing glue
+
+Five external services talk to this system. **There is not one line of routing code.** Each service POSTs directly into a walker; the language generated every endpoint:
+
+| Endpoint | Caller | Fires |
 |---|---|---|
-| **Transport — the WebSocket/CDP client itself** | Hand-rolled RFC 6455 framing and masking over raw TLS sockets. We drive Browserbase's remote stealth browsers over `wss://` CDP from Jac. **No Playwright, no Stagehand, no SDK.** | `browser/ws.jac`, `browser/ws.impl.jac`, `browser/cdp.jac`, `browser/cdp.impl.jac` |
-| **Browser automation** | Session lifecycle, page semantics (`navigate`, `type_human`, `click_ref`, `snapshot_ax`), Browserbase contexts | `browser/session.jac`, `browser/page.jac`, `browser/browserbase.jac` |
-| **Data model** | The prospect graph **is** the data model: 14 node archetypes, 13 typed edges carrying `confidence` / `lane` / `tier` | `schema.jac` |
-| **Shared vocabulary** | Enums + LLM-visible `obj`s + `sem` prompt wiring | `contracts.jac` |
-| **Pipeline** | Walkers that genuinely traverse — none is RPC in walker costume | `research.jac`, `identity.jac`, `githublane.jac`, `lanes.jac`, `lane_w.jac` |
-| **Parallelism** | `flow` / `wait` — the 4 concurrent research lanes, measured at a real 4× speedup | `research.jac` |
-| **Intelligence** | `by llm()` + `sem` + ReAct tools: planning, scoring, cross-link adjudication, email composition, reply parsing | `research.jac`, `outreach.jac`, `voice.jac` |
-| **Identity resolution** | Asymmetric cross-linking + the 6-step email waterfall (hard gate) | `identity.jac`, `emailgate.jac`, `gh.jac` |
-| **Integration surface** | Five external services POST **straight into walkers** — Browserbase, AgentMail, Vapi, Google Calendar, GitHub. **Zero routing glue.** | `outreach.jac`, `voice.jac`, `gcal.jac` |
-| **Realtime** | `@restspec(protocol=APIProtocol.WEBSOCKET, broadcast=True)` on an `async walker` → 5-panel dashboard fan-out; `def:pub -> Generator` + `report stream()` → SSE | `feed.jac` |
-| **Persistence** | Graph survives restarts under `root` — the call agent reads what the browsers wrote hours earlier | `schema.jac` + the runtime |
-| **Tests** | `test "..." { }` blocks, no API keys required | `*.test.jac` |
+| `/walker/RunResearch` | dashboard | the five-lane fan-out |
+| `/walker/OnEmailReply` | AgentMail webhook | reply parsing → call scheduling |
+| `/vapi/kb` | Vapi, **mid-call** | graph lookup, answers in **0.013 ms** |
+| `/vapi/book` | Vapi, **mid-call** | resolves spoken time → Google Calendar |
+| `/walker/OnCallEnd` | Vapi end-of-call | transcript → `Insight` nodes |
+| `/ws/walker/LiveFeed` | dashboard | WebSocket broadcast |
 
-**The one-line answer when a judge asks "show me where Jac runs":** *we wrote the WebSocket frame masking.* Most teams `pip install` an SDK and wrap it in Jac — the rubric scores that 1/5 "peripheral". The transport layer here is Jac.
+**22 public walkers.** The frontend is a Jac `cl { }` client in the same program — one `jac start` serves the React UI and the graph engine from one process, over one anchor store.
 
 ---
 
-## Why a graph, and not tables
+## The centerpiece: a WebSocket and Chrome DevTools client written in Jac
 
-The closing shot of the demo is *"this human was found independently from two directions."*
+**2,284 lines of `browser/*.jac`. No Playwright. No Puppeteer. No Stagehand. No SDK.**
 
-That is a **convergence query on a graph** — the same human reachable from two different `Lane` nodes — and the score multiplier falls straight out of it. In Postgres that's a join and a `GROUP BY`. Here it is one traversal, and `Prospect.is_converged()` is the product thesis expressed as a graph read. The data structure and the thesis are the same object.
+Jac's own browser tool speaks `ws://`; Browserbase requires `wss://`. So the transport was implemented from the socket up, in Jac:
+
+```mermaid
+graph LR
+    W["walker<br/>LaneA · LaneB · LaneC"] --> S["BrowserSession<br/>navigate · type_human<br/>click_ref · extract"]
+    S --> C["obj CDP<br/>id-correlated calls<br/>flattened sessionId"]
+    C --> J["obj JacWS<br/>RFC 6455 frame codec<br/>masking · continuation<br/>ping / pong"]
+    J --> T["TLS socket"]
+    T --> BB["Browserbase<br/>wss://"]
+    BB --> CH["Chrome"]
+
+    style J fill:#7c2d12,color:#fff
+    style C fill:#7c2d12,color:#fff
+```
+
+- **`obj JacWS`** — RFC 6455 frame masking, continuation reassembly, ping/pong, verified **byte-exact against the §5.7 spec vector**.
+- **`obj CDP`** — id-correlated request/response over one socket, flattened `sessionId` routing, per-instance counters so five lanes in five threads cannot steal each other's replies.
+- **`obj Browserbase`** — sessions, persistent auth contexts, live-view URLs, release.
+
+**Owning the transport is measurable.** `type_human` was RTT-bound at **224 ms per keystroke** — each character cost two blocking round-trips. Pipelining the frames brought it to **59 ms**. That optimisation is unavailable through a blocking SDK; it exists only because this stack owns its wire protocol.
+
+---
+
+## Research doctrine
+
+Three LinkedIn lanes are not three views of one search. They are three researchers with different theories of where signal lives.
+
+| Lane | Doctrine | Why |
+|---|---|---|
+| **A** | Mines comment sections under **mid-tier** practitioners | Comment sections under mega-accounts are applause, not signal. At 200–3,000 followers the commenters are peers actually working on the problem. |
+| **B** | Reads post bodies for **first-person** problem statements | Third-person analysis is not evidence someone has the problem. |
+| **C** | Sweeps **synonym vocabulary** | Coverage against phrasing lock-in. |
+| **D** | GitHub API, programmatic | Depth lives in the API, not the UI. |
+| **W** | Deep-researches one named warm lead | The founder's own highest-intent contact. |
+
+### Cross-linking is deliberately asymmetric
+
+**LinkedIn → GitHub is heavy.** Contact-info modal, About regex, post history for shared repo links — then disambiguated by *organisation membership*, never the user-editable company field.
+
+**GitHub → LinkedIn is light.** Headline, current company, About excerpt. The technical evidence already exists; only the professional frame is missing.
+
+### The email waterfall — six steps, then a drop
+
+Email is a **hard gate**, not a scoring factor. A prospect we cannot reach is not a prospect.
+
+1. Profile email field
+2. Global commit search (`search/commits?q=author:`) — the workhorse
+3. Per-repo commits at `per_page=100`
+4. `.patch` header on any public commit
+5. Personal site linked from the profile
+6. LinkedIn contact-info modal
+
+Addresses are attributed, not merely found: a forked repo's manifest yielding the *upstream* author's email is caught, and so is a machine hostname masquerading as a mailbox. Everything dropped is shown with the reason:
+
+```
+[KEEP] willregelmann   will@regelmann.net   taken from commits they authored themselves
+[DROP] djny45                               waterfall exhausted all six steps
+```
+
+Measured on a live run: **14 surfaced → 11 resolved (79%) → 3 selected, 3 dropped with written reasons.**
+
+---
+
+## The conversation layer
+
+```mermaid
+sequenceDiagram
+    participant P as Prospect
+    participant AM as AgentMail
+    participant G as Jac graph
+    participant V as Vapi
+    participant GC as Google Calendar
+
+    G->>AM: SendOutreach — email quoting their own words
+    AM->>P: delivered
+    P->>AM: reply with a phone number
+    AM->>G: webhook → /walker/OnEmailReply
+    G->>G: by llm() → AvailabilityIntent
+    G->>V: ScheduleCall + dossier from the graph
+    V->>P: 📞
+    P->>V: "So how does this actually help me?"
+    V->>G: /vapi/kb
+    G-->>V: her real research — 0.013 ms
+    V->>P: answers from the graph
+    P->>V: "Thursday at three."
+    V->>G: /vapi/book
+    G->>GC: real event + Meet link
+    GC-->>P: invite, both attendees
+    V->>G: end-of-call → Insight nodes
+```
+
+**The voice agent reads the same graph the browsers wrote to ninety seconds earlier.** That is the architectural payoff of a persistent graph rather than a request-scoped pipeline.
+
+**Two rules the agent cannot violate.** The server resolves what was said into a datetime — the model never decides the slot, so a misheard time raises instead of confidently booking the wrong one. And every calendar invite records what it heard, what it resolved, and the evidence:
+
+```
+Heard on the call: "Thursday at 3PM"
+Resolved to:       Thursday, July 30th at 3 PM Pacific (upcoming weekday)
+What we found:     "Hi, this is Xingzhi (Becky) Zhu, UCLA alum double majoring
+                    in Business Economics and Statistics. My fields of interest
+                    are analytics and product management."
+```
+
+---
+
+## Composition guarantees
+
+**The grounding gate.** `ComposeOutreach` refuses to draft unless the graph holds something this person actually wrote or built, and refuses again if the drafted body does not quote it verbatim. Given an empty graph it declines rather than improvises:
+
+> *"a headline on its own does not count — it is a job title, not something they said."*
+
+**Scraped text is truncated at its source boundary.** LinkedIn's "More profiles for you" sidebar bleeds other people's names and employers into an About section. Every citation is cut at the earliest such marker, at both the extraction and the assembly layer — measured on a real contaminated string: 285 → 156 chars, five strangers removed, the subject's own sentence intact.
+
+**Identity tiers state their basis.** `VERIFIED` requires corroboration by name match or verified org membership. Without it the profile still attaches at `PROBABLE 0.74` with a basis reading *"nothing corroborated it"* — visible for a human to adjudicate, never promoted onto a card or into an email.
+
+---
+
+## Numbers
+
+| | |
+|---|---|
+| **Jac in the product path** | **100%** — no Python, no JavaScript |
+| **Jac lines** | 22,172 across 62 `.jac` files |
+| **Graph** | 16 node types · 15 typed edges with declared endpoints |
+| **Walkers** | 30 total · 22 `walker:pub` |
+| **LLM** | 14 `by llm()` abilities · 156 `sem` annotations |
+| **Pure-Jac browser stack** | 2,284 lines — WebSocket + CDP + Browserbase |
+| **Test suite** | 864 passing assertions |
+| **Mid-call graph lookup** | 0.013 ms local · 0.43 s through the public tunnel |
+| **Keystroke latency** | 224 ms → **59 ms** after frame pipelining |
+| **External services · routing glue** | 5 services · **0 lines** |
+
+Reproduce the language split yourself:
+
+```bash
+bash ops/jac_audit.sh
+```
 
 ---
 
 ## Run it
 
-Requires the **Jac 0.34.7 binary** (the pip `jaclang` package is 18 minor versions stale).
-
 ```bash
-jac install          # resolve deps, including the scale subsystem
-jac check .          # typecheck
-ops/restart.sh       # serve on :8000  (use this, not `jac start` — see below)
+# 1. Install the Jac toolchain (the binary, not the pip package)
+curl -fsSL https://jaseci.org/install.sh | bash
+
+# 2. Configure
+cp .env.example .env      # Anthropic, Browserbase, AgentMail, Vapi, Google
+
+# 3. Serve the API and the web client from one process
+ops/serve.sh --port 8000 --dir .
+
+# 4. Open the dashboard
+open http://127.0.0.1:8000
 ```
 
-Then, to develop against a populated graph without waiting for a live research run:
+`ops/serve.sh` runs a guest-root preflight, refuses to start against a data directory another process holds, gates readiness on a real endpoint rather than `/healthz`, and smoke-tests twelve anonymous POSTs before reporting ready.
 
-```bash
-python3 ops/seed_and_capture.py
+**Repository layout**
+
 ```
-
-Tests (no API keys needed — 20/20 green):
-```bash
-ops/test.sh
+schema.jac        16 nodes, 15 typed edges — the product
+contracts.sv.jac  enums + LLM-visible objs + sem annotations
+plan.jac          PlanCampaign — by llm() ICP synthesis
+research.jac      RunResearch orchestrator + Lanes A/B/C
+githublane.jac    Lane D — GitHub programmatic
+lane_w.jac        Lane W — the named warm lead
+identity.jac      cross-linking, email waterfall, ranking
+outreach.jac      ComposeOutreach + the grounding gate
+voice.jac         Vapi: ScheduleCall, mid-call tools, OnCallEnd
+gcal.jac          Google Calendar + Meet
+browser/          2,284 lines — WebSocket, CDP, Browserbase, in Jac
+bridge.jac        13 server functions the web client calls by name
+frontend.cl.jac   the dashboard — a Jac cl { } client
+docs/             JAC_GOTCHAS · EVIDENCE · RUNBOOK · FRONTEND_INTEGRATION
 ```
-
-Jac percentage audit:
-```bash
-ops/jac_audit.sh
-```
-
-### Two things that will cost you an hour if you don't know them
-
-1. **Run `jac install` before serving.** Until the scale deps are resolved, `@restspec(protocol=APIProtocol.WEBSOCKET)` is **silently ignored** — no error, `jac check` still passes, the walker is served as a plain HTTP endpoint, and `ws://…/ws/walker/LiveFeed` 404s. (`[scale.websocket]` in `jac.toml` is not required for this; it only tunes rate limits.)
-2. **Use `ops/restart.sh`.** Wiping `.jac/data` while a stale `jac start` is alive bricks the server: every endpoint 500s with `'JacScaleUserManager' object has no attribute '_lock'` and it does not recover. The script kills completely, waits for the port, then wipes, then warms up, then verifies WS registration.
-
-More in `docs/JAC_GOTCHAS.md`.
 
 ---
 
-## Documentation
+## `docs/JAC_GOTCHAS.md`
 
-| Doc | What it is |
-|---|---|
-| [`docs/FRONTEND_INTEGRATION.md`](docs/FRONTEND_INTEGRATION.md) | The complete frontend contract. Every endpoint, the exact envelopes, the WebSocket frame shape, the SSE format, the Browserbase iframe pattern. All JSON captured from the running server. **You can build the dashboard from this alone.** |
-| [`docs/EVIDENCE.md`](docs/EVIDENCE.md) | Real artifacts for every claim, each with its reproducing command — and an explicit section listing what is **not** proven. |
-| [`docs/RUNBOOK.md`](docs/RUNBOOK.md) | **Demo day.** The five commands, every failure mode we actually hit and its fix, and the pre-demo checklist. |
-| [`docs/JAC_GOTCHAS.md`](docs/JAC_GOTCHAS.md) | Toolchain traps found the hard way. |
+Thirty-plus findings about Jac 0.34.7, each reproduced by executing code rather than reading it, each with the command that settles it. A sample:
 
----
-
-## Architecture
-
-```
-root
- └── Founder ──:Targets:──▶ ICP
-      ├──:HasWarmLead:──▶ Prospect
-      └──:Runs:──▶ ResearchRun
-           └──:HasLane:──▶ Lane {A,B,C,D,W}    # A/B/C LinkedIn (visible browsers), D GitHub (programmatic), W warm lead
-                ├──:Emitted:──▶ Reasoning       # the analyst-voice sidebar
-                └──:Surfaced:──▶ Prospect       # 2+ lanes surfacing one human == convergence
-                     ├──:HasEvidence:──▶ Evidence   {lane, confidence on the edge}
-                     ├──:Identity:──▶ Github/LinkedinProfile  {tier, basis on the edge}
-                     ├──:Outreach:──▶ EmailThread ──:GotReply:──▶ ReplyEvent
-                     ├──:Called:──▶ CallSession ──:Learned:──▶ Insight
-                     └──:Booked:──▶ Booking
-```
-
-**The lanes are three different researchers, not three views of one query.** Lane A mines comments under *mid-tier practitioner* posts (not the megathreads under famous accounts — those are ~90% "Great post!" noise). Lane B reads post authorship for first-person problem statements. Lane C sweeps synonyms to defeat vocabulary lock-in. Lane D goes GitHub-first and stays programmatic.
-
-Cross-linking is deliberately **asymmetric**: LinkedIn→GitHub is heavy (the same visible browser navigates across, on three panels at once — the product thesis rendered as a screen transition), GitHub→LinkedIn is light.
-
-The email gate is a **hard gate**. No email, no pitch — and the drops stay visible on the ledger, because visible elimination is what makes the surviving three look earned rather than cherry-picked.
+- A walker field named `reports` collides with the built-in channel; manual appends land nowhere.
+- Converting a `has` field to a `def` method silently breaks every call site — a bare method reference is always truthy.
+- Declaring a node in two modules yields two incompatible types that traversal matches **by name**, so one query returns a mixture.
+- Importing the same `obj` name from two modules **segfaults the process at load time**, with `jac check` green — and it segfaults even if you construct neither.
+- `flow` inside a list comprehension races: every worker can read the loop variable after it advanced.
+- A `walker:pub` whose entries only match node types is unreachable over HTTP — `POST /walker/<name>` spawns on root. HTTP 200, empty reports, untouched graph.
+- `@restspec(envelope=False, produces=...)` sends a return value to the wire verbatim — on the **function** path only; the walker endpoint builder ignores it.
 
 ---
 
-## Status
+<div align="center">
 
-See [`docs/EVIDENCE.md`](docs/EVIDENCE.md) §10 for the honest list of what is proven and what is not, and §11 for an open defect that blocks the demo.
+**The graph is not where the answer is stored. The graph is the answer.**
+
+[github.com/ElijahUmana/traction_v0.1](https://github.com/ElijahUmana/traction_v0.1)
+
+</div>
