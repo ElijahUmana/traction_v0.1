@@ -421,6 +421,12 @@ def _prospect_view(p: Prospect) -> ProspectView {
 
     thread = _latest_thread(p);
 
+    # The most recent booking, if this person has one. Read back from the graph
+    # rather than remembered from the request that created it, so a restart
+    # mid-demo shows exactly what Google holds.
+    booked = _bookings(p);
+    latest = booked[-1] if booked else None;
+
     return ProspectView(
         id=jid(p),
         name=_display_name(p),
@@ -443,7 +449,10 @@ def _prospect_view(p: Prospect) -> ProspectView {
         confidence=p.score,
         status=_status(p),
         draft_subject=thread.subject if thread is not None else "",
-        draft_body=thread.body if thread is not None else ""
+        draft_body=thread.body if thread is not None else "",
+        scheduled_call_at=latest.start if latest is not None else "",
+        meet_link=latest.meet_link if latest is not None else "",
+        calendar_url=latest.html_link if latest is not None else ""
     );
 }
 
@@ -754,12 +763,44 @@ def:pub bootstrap_workspace() -> WorkspaceView {
 # Deletes the founder and everything hanging off them. Prospects seeded
 # directly onto root are reached separately, because rehearsal seeds attach
 # there rather than under the founder.
+"""Clear the workspace so the flow can be run again from the top.
+
+The obvious version of this - delete `[root --> [?:Prospect]]` - reaches almost
+nothing. A researched prospect does not hang off root: the warm lead hangs off
+the Founder by `HasWarmLead`, and everyone else off a Lane by `Surfaced`. So the
+delete removed the Founder, left every Prospect behind, and the UI came back
+still showing them mid-flow with Send disabled and "Already sent" on the card.
+
+Everything reachable is therefore collected first - the same three sources
+`_all_prospects` reads - and deleted, before the Founder that anchors the tree.
+Deleting the anchor first would orphan the subtree rather than remove it, and
+orphaned nodes still answer a traversal that reaches them another way.
+
+Prospects are collected BEFORE anything is deleted for the same reason: the
+traversal that finds them runs through the Founder, so removing the Founder
+mid-loop would cut the path to the rest of the list.
+"""
 def:pub reset_workspace() -> WorkspaceView {
+    who = _founder();
+
+    doomed: list[Prospect] = [root --> [?:Prospect]];
+    if who is not None {
+        runs = _runs(who);
+        lanes = [runs ->:HasLane:->];
+        doomed = doomed + [who ->:HasWarmLead:->] + [lanes ->:Surfaced:->];
+    }
+
+    seen: list[str] = [];
+    for p in doomed {
+        key = jid(p);
+        if key not in seen {
+            seen.append(key);
+            del p;
+        }
+    }
+
     for entity in [root --> [?:Founder]] {
         del entity;
-    }
-    for stray in [root --> [?:Prospect]] {
-        del stray;
     }
     return _workspace();
 }

@@ -24,6 +24,75 @@ sv import from bridge {
     reset_workspace
 }
 
+"""Render the slot Google actually stored, or say nothing at all.
+
+`scheduled_call_at` is the `start` value read back off the Booking node, which
+is what Google committed - not the phrase the prospect spoke and not what the
+model proposed. Both of those can be wrong; only Google's copy decides when the
+meeting is.
+
+Empty input renders as empty output. There is deliberately no fallback time
+here: this card sits under a real person's real name, and a plausible slot next
+to it is worse than no slot, because a reader cannot tell it is a guess.
+
+Parsing is by hand rather than by Date(), because an ISO string carrying an
+explicit offset like `-07:00` gets re-rendered in the VIEWER's timezone by
+`toLocaleString`, silently shifting the meeting by hours for anyone not sitting
+in California. The offset is already correct; the digits are read verbatim.
+"""
+def _iso_parts(iso: str) -> list[str] {
+    if not iso or "T" not in iso {
+        return [];
+    }
+    day_part = iso.split("T")[0];
+    time_part = iso.split("T")[1];
+    bits = day_part.split("-");
+    if len(bits) != 3 {
+        return [];
+    }
+    clock = time_part[0:5];
+    if ":" not in clock {
+        return [];
+    }
+    return [bits[0], bits[1], bits[2], clock.split(":")[0], clock.split(":")[1]];
+}
+
+
+glob MONTHS: list[str] = [
+    "JAN", "FEB", "MAR", "APR", "MAY", "JUN",
+    "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"
+];
+
+
+def booked_day(iso: str) -> str {
+    parts = _iso_parts(iso);
+    if not parts {
+        return "BOOKED";
+    }
+    month_index = int(parts[1]) - 1;
+    if month_index < 0 or month_index > 11 {
+        return "BOOKED";
+    }
+    return MONTHS[month_index] + " " + str(int(parts[2]));
+}
+
+
+def booked_when(iso: str) -> str {
+    parts = _iso_parts(iso);
+    if not parts {
+        return "Time and joining link are in the calendar invite.";
+    }
+    hour = int(parts[3]);
+    minute = parts[4];
+    suffix = "AM" if hour < 12 else "PM";
+    display = hour % 12;
+    if display == 0 {
+        display = 12;
+    }
+    return str(display) + ":" + minute + " " + suffix + " · 30 minutes · Google Meet";
+}
+
+
 def stage_index(phase: str) -> int {
     if phase in [
         "EMPTY",
@@ -56,6 +125,20 @@ def stage_index(phase: str) -> int {
         return 2;
     }
     return 3;
+}
+
+# The founder's initials, derived from the name the server actually sent.
+# This used to be the literal "BZ", which stayed "BZ" for every founder while
+# the line beside it correctly rendered `founder_name` from the wire.
+def founder_initials(name: str) -> str {
+    parts = [p for p in name.strip().split(" ") if p];
+    if not parts {
+        return "";
+    }
+    if len(parts) == 1 {
+        return parts[0][0:2].upper();
+    }
+    return (parts[0][0] + parts[-1][0]).upper();
 }
 
 def status_tone(status: str) -> str {
@@ -1985,9 +2068,15 @@ def:pub ProspectResults(
         <section className="workspace-section prospect-results">
             <div className="section-heading split-heading">
                 <div>
-                    <p className="eyebrow">Find · 4 research prospects</p>
+                    <p className="eyebrow">
+                        {"Find · " + str(len(prospects)) + (" research prospect" if len(prospects) == 1 else " research prospects")}
+                    </p>
                     <h1 className="editorial">
-                        Four people with evidence close to the hypothesis.
+                        {"Nobody has cleared the evidence bar yet."
+                            if len(prospects) == 0
+                            else str(len(prospects)) + (" person with evidence close to the hypothesis."
+                                if len(prospects) == 1
+                                else " people with evidence close to the hypothesis.")}
                     </h1>
                 </div>
                 <Mascot state="finding"/>
@@ -2455,10 +2544,10 @@ def:pub OutreachWorkspace(
                 </div>
             </div>
             <div className="identity-strip">
-                <span className="identity-avatar">BZ</span>
+                <span className="identity-avatar">{founder_initials(founderName)}</span>
                 <div>
                     <strong>Send as {founderName} via Gmail</strong>
-                    <small>{founderEmail} · Founder, Traction</small>
+                    <small>{founderEmail}</small>
                 </div>
                 <span className="connected">● Connected</span>
                 <span className="demo-pill">Demo adapter</span>
@@ -2536,9 +2625,9 @@ def:pub OutreachWorkspace(
                             />
                         </label>
                         <div className="draft-checks">
-                            <span>✓ First-person founder voice</span>
-                            <span>✓ One specific signal</span>
-                            <span>✓ Research ask, not sales</span>
+                            <span>Drafting rules: first-person founder voice</span>
+                            <span>One specific signal</span>
+                            <span>Research ask, not sales</span>
                         </div>
                         {if notice {
                             <p key="outreach-notice" className="notice">{notice}</p>
@@ -2695,16 +2784,6 @@ def:pub ActivityChannelColumn(
         </article>;
 }
 
-def scheduled_call_time(name: str) -> str {
-    if name == "Priya Shah" {
-        return "Today · 2:40 PM PT";
-    }
-    if name == "Jordan Lee" {
-        return "Tomorrow · 9:15 AM PT";
-    }
-    return "Today · 1:10 PM PT";
-}
-
 def:pub AgentCallOperations(
     prospects: list[ProspectView],
     onSchedule: Callable[[], None],
@@ -2722,7 +2801,7 @@ def:pub AgentCallOperations(
             scheduled = prospect;
             scheduled_id = prospect.id;
             scheduled_name = prospect.name;
-            scheduled_time = scheduled_call_time(prospect.name);
+            scheduled_time = prospect.status;
         } elif prospect.status == "Sent" and sent is None {
             sent = prospect;
         } elif prospect.status == "Booked" and booked is None {
@@ -2775,9 +2854,9 @@ def:pub AgentCallOperations(
                     {if scheduled is not None {
                         <div key="scheduled-call-detail" className="call-schedule-detail">
                             <strong>{scheduled_time}</strong>
-                            <span>4-minute scheduling call · Phone</span>
+                            <span>Scheduling call · Phone</span>
                             <p>
-                                Reply detected. Traction immediately placed this call on the queue.
+                                Queued by Traction. The time is agreed on the call itself, so there is nothing to show until the prospect picks one.
                             </p>
                         </div>
                     }}
@@ -2955,6 +3034,7 @@ def:pub LiveCallWorkspace(
         prospect_name = prospect.name;
     }
     timer = "00:0" + str(step + 1) if step < 9 else "00:10";
+    calling_for = workspace.founder_name if workspace.founder_name else "the founder";
     return
         <section className="workspace-section live-call-workspace">
             <div className="live-call-topbar">
@@ -2963,7 +3043,7 @@ def:pub LiveCallWorkspace(
                 </button>
                 <div className={"live-call-status on-air" if active else "live-call-status"}>
                     <span></span>
-                    {"Live · " + timer if active else "Call complete · 04:08"}
+                    {"Live · " + timer if active else "Call complete"}
                 </div>
             </div>
             <div className="live-call-shell">
@@ -2971,7 +3051,7 @@ def:pub LiveCallWorkspace(
                     <div className="call-agent-portrait">
                         <Mascot state={"speaking" if active else "completing"}/>
                         <span>Traction agent</span>
-                        <strong>Calling for Becky</strong>
+                        <strong>{"Calling for " + calling_for}</strong>
                     </div>
                     <div className="call-connection-line">
                         <span></span>
@@ -3058,8 +3138,8 @@ def:pub LiveCallWorkspace(
                         <div key="call-booked" className="live-call-complete">
                             <div>
                                 <span className="profile-section-label">Booked</span>
-                                <h2>Tuesday, July 28 · 10:30 AM PT</h2>
-                                <p>25-minute founder demo · Calendar invite and Zoom link sent.</p>
+                                <h2>Founder demo booked</h2>
+                                <p>The time and joining link are in the calendar invite.</p>
                             </div>
                             <div className="next-action-buttons">
                                 <button className="button" onClick={onBack}>
@@ -3101,7 +3181,7 @@ def:pub CalendarDay(
                             className="calendar-meeting-event"
                             onClick={lambda { onProfile(prospect.id); }}
                         >
-                            <span>10:30–10:55</span>
+                            <span>Scheduled</span>
                             <strong>Founder demo · {prospect.name}</strong>
                             <small>Zoom · Traction research</small>
                         </button>
@@ -3159,7 +3239,7 @@ def:pub CalendarWorkspace(
                     <button className="button small">Today</button>
                     <button className="calendar-arrow" aria-label="Previous week">←</button>
                     <button className="calendar-arrow" aria-label="Next week">→</button>
-                    <strong>July 27–31, 2026</strong>
+                    <strong>This week</strong>
                 </div>
                 <span>{str(len(booked))} booked demo meeting{"s" if len(booked) != 1 else ""}</span>
             </div>
@@ -3216,13 +3296,22 @@ def:pub CalendarWorkspace(
                     {for prospect in booked {
                         <article key={prospect.id} className="agenda-meeting-card">
                             <div className="agenda-date">
-                                <span>JUL</span>
-                                <strong>28</strong>
+                                <span>{booked_day(prospect.scheduled_call_at)}</span>
                             </div>
                             <div>
-                                <span>Tuesday · 10:30 AM PT</span>
                                 <h3>Founder demo with {prospect.name}</h3>
-                                <p>25 minutes · Zoom · Both calendars confirmed</p>
+                                <p>{booked_when(prospect.scheduled_call_at)}</p>
+                                {if prospect.meet_link {
+                                    <a
+                                        key="meet"
+                                        className="profile-link-button"
+                                        href={prospect.meet_link}
+                                        target="_blank"
+                                        rel="noreferrer"
+                                    >
+                                        Join Google Meet →
+                                    </a>
+                                }}
                                 <button
                                     className="profile-link-button"
                                     onClick={lambda { onProfile(prospect.id); }}
@@ -3244,10 +3333,14 @@ def:pub LearningWorkspace(
     busy: bool
 ) -> JsxElement {
     has_booked = False;
+    booked_name = "";
     learn_sources: list[ActivityView] = [];
     for prospect in workspace.prospects {
         if prospect.status == "Booked" {
             has_booked = True;
+            if not booked_name {
+                booked_name = prospect.name;
+            }
         }
     }
     for activity in workspace.activities {
@@ -3287,7 +3380,7 @@ def:pub LearningWorkspace(
                 <div key="synthesize-interview" className="meeting-ready-card">
                     <div className="meeting-ready-meta">
                         <span>Research session</span>
-                        <strong>Tuesday · 10:30 AM PT</strong>
+                        <strong>{booked_name}</strong>
                         <small>
                             Only the research meeting will be used for learning.
                         </small>
@@ -3408,9 +3501,11 @@ def:pub LearningWorkspace(
                             Hypothesis v{str(workspace.hypothesis_version)}
                         </span>
                         <div>
-                            <h2>Updated: mutual intent before local discovery</h2>
+                            <h2>Updated from interview evidence</h2>
                             <p>
-                                Travelers value one trusted, mutual-intent local connection at arrival more than recommendation volume.
+                                {workspace.understanding.learning_goal
+                                    if workspace.understanding is not None
+                                    else ""}
                             </p>
                         </div>
                     </div>
@@ -3520,9 +3615,11 @@ def:pub LegacyLearningWorkspace(
                             Hypothesis v{str(workspace.hypothesis_version)}
                         </span>
                         <div>
-                            <h2>Updated: mutual intent before local discovery</h2>
+                            <h2>Updated from interview evidence</h2>
                             <p>
-                                Travelers value one trusted, mutual-intent local connection at arrival more than recommendation volume.
+                                {workspace.understanding.learning_goal
+                                    if workspace.understanding is not None
+                                    else ""}
                             </p>
                         </div>
                     </div>

@@ -118,7 +118,20 @@ obj ProspectView {
         confidence: float,
         status: str,
         draft_subject: str,
-        draft_body: str;
+        draft_body: str,
+        # What Google actually stored for this person, read back off the
+        # `Booked` edge. Empty until a booking exists.
+        #
+        # Without these the Calendar panel has no source for a time and falls
+        # back to a literal - which renders a plausible slot next to a real
+        # human's real name, and the one thing worse than an empty panel is a
+        # confident wrong one. `scheduled_call_at` is Google's own start value,
+        # not the phrase the prospect spoke and not what the model proposed:
+        # the server resolves the spoken time and Google is the authority on
+        # what was committed.
+        scheduled_call_at: str,
+        meet_link: str,
+        calendar_url: str;
 }
 
 obj ActivityView {
@@ -138,6 +151,20 @@ obj ActivityView {
         learnable: bool,
         is_demo: bool;
 }
+
+# CAUTION - `channel` is a CLOSED VOCABULARY and it fails SILENTLY.
+# The client keeps an activity only if `channel` is exactly one of
+#     "Gmail" | "Phone" | "Google Calendar" | "Zoom"
+# (frontend.cl.jac, the activity filter in ActivityTracking). Any other value -
+# "AgentMail", "Vapi", "email", a lowercase variant - is dropped with no error
+# and no warning.
+#
+# Measured by UITEST with sentinel payloads: the header counted "2 recorded
+# events" while the list underneath read "Nothing recorded yet." on the same
+# screen, because the count is taken before the filter and the list after it.
+# That is the signature to look for. Anything projecting an ActivityView must
+# map its source system onto one of those four strings.
+sem ActivityView.channel = "One of exactly: Gmail, Phone, Google Calendar, Zoom. Any other value is silently discarded by the client.";
 
 obj InsightView {
     has id: str,
