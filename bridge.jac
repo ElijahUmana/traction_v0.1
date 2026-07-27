@@ -31,7 +31,6 @@ into looking real.
 """
 
 import time;
-import json;
 
 # Every edge type traversed below is imported. An UNIMPORTED edge type does not
 # narrow the hop - it duck-types across every out-edge and returns everything
@@ -150,9 +149,42 @@ def _lane_title(which: LaneId) -> str {
 # live run on the graph (JAC_GOTCHAS 8b) - which is how a health check once
 # reported "runs: 0" while another endpoint reported four live lanes.
 
+# ===========================================================================
+# FIXTURES - telling seeded rows apart from researched ones
+# ===========================================================================
+# `.invalid` is reserved by RFC 2606 and can never resolve, so an address in
+# it is not "a prospect we failed to verify" - it is definitionally not a real
+# human. `rehearsal.jac` and `feedseed.jac` are the only things that mint them.
+#
+# This is a SAFETY NET, not the fix. `repair_demo_graph()` below deletes these
+# rows outright, which is the right answer: a projection that hides rows the
+# graph still holds would let `graph_health` keep counting them and disagree
+# with the screen. The guard exists so a demo cannot show a fixture next to a
+# researched human if nobody remembered to run the repair first.
+def _is_fixture(name: str, email: str) -> bool {
+    if email and email.lower().endswith(".invalid") {
+        return True;
+    }
+    if name and name.lower().startswith("rehearsal") {
+        return True;
+    }
+    return False;
+}
+
+
 def _founder -> Founder | None {
     founders = [root --> [?:Founder]];
-    return founders[0] if founders else None;
+    if not founders {
+        return None;
+    }
+    # A seeded Founder sitting at index 0 in front of the real one would put
+    # "rehearsal founder" on the founder card and sign every email with it.
+    for f in founders {
+        if not _is_fixture(f.name, f.email) {
+            return f;
+        }
+    }
+    return founders[0];
 }
 
 
@@ -199,7 +231,9 @@ def _all_prospects(who: Founder | None) -> list[Prospect] {
         key = jid(p);
         if key not in seen {
             seen.append(key);
-            out.append(p);
+            if not _is_fixture(p.name, p.email) {
+                out.append(p);
+            }
         }
     }
     by_score = lambda (x: Prospect) -> float { return x.score; };
@@ -727,6 +761,67 @@ def:pub reset_workspace() -> WorkspaceView {
 }
 
 
+# One-shot demo-graph repair, run over HTTP against the LIVE server because a
+# second `jac` process on the same anchor store corrupts the guest root
+# (JAC_GOTCHAS 8e). Two jobs, both idempotent:
+#
+#   1. Rewrite the EXISTING Founder's name and email from `.env`. The node on
+#      the graph was minted by the rehearsal seeder and carries
+#      "rehearsal founder" / rehearsal@example.invalid, which is what the
+#      founder card renders and what `outreach.founder_context()` signs with.
+#      It updates in place and never creates a second Founder - a second one
+#      splits the graph and every run, lane and warm-lead edge hanging off the
+#      first becomes unreachable.
+#
+#   2. Delete the seeded prospects outright rather than filtering them, so the
+#      graph and `graph_health` agree with the screen. Only `.invalid`
+#      addresses and `rehearsal*` names match, so a researched human is never
+#      in scope.
+#
+# The two parameters default to `.env` and exist so the caller can override
+# them: `cfg()` reads the .env the SERVER process loaded, and if that process
+# was started before `FOUNDER_NAME` was added, reading it again returns the
+# stale value. Passing the name explicitly cannot go stale.
+def:pub repair_demo_graph(
+    founder_name: str = "", founder_email: str = ""
+) -> WorkspaceView {
+    real_name = founder_name if founder_name else cfg("FOUNDER_NAME", "");
+    real_email = founder_email if founder_email else cfg("FOUNDER_EMAIL", "");
+
+    for f in [root --> [?:Founder]] {
+        if _is_fixture(f.name, f.email) {
+            if real_name {
+                f.name = real_name;
+            }
+            if real_email {
+                f.email = real_email;
+            }
+            print(f"[bridge] repair: Founder renamed to {f.name} <{f.email}>");
+        }
+    }
+
+    dropped: list[str] = [];
+    for p in [root --> [?:Prospect]] {
+        if _is_fixture(p.name, p.email) {
+            dropped.append(p.name);
+            del p;
+        }
+    }
+    who = _founder();
+    if who is not None {
+        owner: Founder = who as Founder;
+        for p in [owner ->:HasWarmLead:->] {
+            if _is_fixture(p.name, p.email) {
+                dropped.append(p.name);
+                del p;
+            }
+        }
+    }
+    print(f"[bridge] repair: dropped {len(dropped)} seeded prospect(s)");
+    return _workspace();
+}
+
+
 # Intake. Records the product description on the Founder, then runs the real
 # `by llm()` ICP planner over it. PlanCampaign keeps an existing ICP unless
 # told to replace, so re-describing the product genuinely re-plans.
@@ -828,6 +923,25 @@ def:pub run_signal_search() -> WorkspaceView {
     if _icp(who) is None {
         root spawn PlanCampaign();
     }
+
+    # DEMO MODE. `TRACTION_DEMO=1` in .env makes this return whatever research
+    # is already on the graph instead of launching the live fan-out.
+    #
+    # This is not a stub and it fabricates nothing: `_workspace()` reads the
+    # same lanes, the same analyst narration, the same prospects and the same
+    # convergence the live run would have written. The only thing that changes
+    # is WHO wrote them - a prior run rather than this request.
+    #
+    # It exists because the live path drives five real browser sessions against
+    # LinkedIn and GitHub and takes six to fifteen minutes. A UI that sits at
+    # 97% with a lane reading "SEARCHING" for a quarter of an hour is not a
+    # demo, and on a recording it is indistinguishable from a hang.
+    #
+    # Unset the flag and the real fan-out runs, unchanged, below.
+    if cfg("TRACTION_DEMO", "") {
+        return _workspace();
+    }
+
     root spawn RunResearch();
     root spawn CrossLinkToLinkedIn();
     root spawn ResolveEmail();
