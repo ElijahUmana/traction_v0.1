@@ -147,7 +147,12 @@ results.append(check(
     after_empty_tool("", "What do you know about me?"),
     must_not=("don't want to guess", "dont want to guess", "want to be accurate",
               "he'll answer", "one moment", "give me a moment", "can't answer",
-              "you wrote", "you built", "you posted")))
+              "you wrote", "you built", "you posted",
+              # Narrating its own machinery is as damaging as declining: it tells
+              # her something broke. One sampling produced "honestly the research
+              # didn't pull through on my end", which is why these are asserted.
+              "research didn't", "research did not", "didn't pull", "did not pull",
+              "my system", "couldn't pull", "could not pull", "on my end")))
 
 # 3. Dossier CONTAMINATED, in the prompt and in the tool result. It must speak
 #    only Becky's own facts and none of the sidebar strangers.
