@@ -1,0 +1,41 @@
+========================================================================
+Lane W dossier -> ComposeOutreach, both real
+========================================================================
+
+[1] Lane W against the real profile...
+Prospect(name='Becky Zhu', handle='xingzhi-zhu', preferred_name='Becky', headline='Program Manager @Oracle | UCLA Business Economics & Statistics and Data Science', company='Oracle', linkedin_url='https://www.linkedin.com/in/xingzhi-zhu/', email='xingzhizhu6@gmail.com', email_source=<EmailSource.PROVIDED: 'provided'>, email_confidence=1.0, tier=<CompletenessTier.A: 'A'>, score=0.0, score_pre_crosslink=0.0, dropped_reason='')
+    prospect  Becky Zhu  preferred='Becky'
+    evidence  ['headline', 'about']
+    jid       46591dbbaba94497a681b32a3f953ff9
+
+[2] ComposeOutreach against that exact node...
+{'ok': False, 'refused': True, 'prospect': 'Becky Zhu', 'prospect_id': '46591dbbaba94497a681b32a3f953ff9', 'reason': 'refusing to send an ungrounded draft: the LinkedIn quote from the graph does not appear verbatim in the drafted body (expected to find: Hi, this is Xingzhi (Becky) Zhu, UCLA alum double majoring i)', 'source': 'llm', 'subject': 'Analytics meets product management: one human at a time', 'body': 'Becky,\n\nIn your LinkedIn About section you wrote: "My fields of interest are analytics and product management." That intersection is exactly where discovery breaks down — tools find markets, not the specific person who needs what you\'re building.\n\nFind the human, not the market. That\'s what our product does: a prospect graph that finds one human from four directions, so outreach starts with context instead of guesswork.\n\nWould you have 20 minutes this week to see it?\n\nAda Umana'}
+    refused   True
+    reason    refusing to send an ungrounded draft: the LinkedIn quote from the graph does not appear verbatim in the drafted body (expected to find: Hi, this is Xingzhi (Becky) Zhu, UCLA alum double majoring i)
+
+    subject   Analytics meets product management: one human at a time
+    ---- body ----
+    Becky,
+    
+    In your LinkedIn About section you wrote: "My fields of interest are analytics and product management." That intersection is exactly where discovery breaks down — tools find markets, not the specific person who needs what you're building.
+    
+    Find the human, not the market. That's what our product does: a prospect graph that finds one human from four directions, so outreach starts with context instead of guesswork.
+    
+    Would you have 20 minutes this week to see it?
+    
+    Ada Umana
+    --------------
+    addressed_as         ''
+    cited kind           ''
+    cited quote          ''
+    github_artifact      ''
+
+[3] greets her Becky              False
+[3] never calls her Xingzhi       True
+[3] cites the About section       False
+[3] never claims she posted       True
+[3] invents no GitHub artifact    True
+
+========================================================================
+REAL_GRAPH_EMAIL_OK=False
+========================================================================
