@@ -76,6 +76,61 @@ Neither invented anything to fill a gap. That is the behaviour we want.
 
 ---
 
+## CONFIRMED: with the spawn corrected, the chain RUNS
+
+Spawned on the Founder, `RunResearch` does the whole fan-out. Graph census per
+stage, so every number below was read back off the graph rather than reported by
+the walker that claimed to have written it:
+
+```
+[2] RunResearch   prospects=20 (+20)  evidence=20  reasoning=112  identities=17  threads=37
+[3] Lane W        prospects=21 (+1)   evidence=22  reasoning=119  identities=18  with_email=1
+```
+
+Four lanes, one run, live view URLs for the three browser lanes:
+
+```
+lane A  found 0   probes 5   live_url present
+lane B  found 3   probes 5   live_url present
+lane C  found 0   probes 6   live_url present
+lane D  found 17  probes 9   (no browser, by design)
+unique_prospects 20   converged 0
+```
+
+Lane W in the same run, on the real warm lead:
+
+```
+Becky Zhu  preferred='Becky'  Program Manager @Oracle
+linkedin.com/in/xingzhi-zhu  xingzhizhu6@gmail.com [PROVIDED, 1.0]
+tier A   lane state=done   live_url=yes
+```
+
+**The 15-minute silence in the earlier run was slowness, not a hang.** The
+LinkedIn lanes completed. That correction matters: I recorded it as "unknown"
+rather than guessing, and the guess would have been wrong.
+
+---
+
+## FINDING 4 — Lane A and Lane C surfaced ZERO, in production
+
+```
+lane A  found 0  probes_run 5   failure: ''
+lane C  found 0  probes_run 6   failure: ''
+```
+
+Five and six probes each, no failure reported, nothing found. This is the
+class-selector rot measured directly earlier (`LANE_A_SELECTORS_ALIVE=False`,
+containers 0 on a page carrying 11 profile anchors) now visible end to end. Two
+of the four lanes contribute nothing, and `converged 0` follows from it — with
+only Lane B and Lane D producing, nobody is found from two directions.
+
+`failure: ''` on both is the tell: the lanes do not consider themselves broken.
+The honest-narration fix already landed for Lane A's comment path says so out
+loud now, but the yield is still zero until the selectors themselves are
+replaced.
+
+---
+
 ## WHAT IS CONFIRMED WORKING
 
 **Lane D, live against the GitHub API** — 17 candidates, 6 search calls, 0 errors,
@@ -101,16 +156,33 @@ it"*) rather than padding the count.
 
 ## NOT PROVEN IN THIS RUN
 
-The LinkedIn lanes (A/B/C), Lane W, cross-linking, and ComposeOutreach-with-real-
-evidence. After the spawn fix, `RunResearch` ran Lane D to completion and then sat
-in the LinkedIn lanes for **15+ minutes without further output** before this
-artifact was written. That is not a pass or a fail — it is unfinished, and it is
-recorded as unfinished.
+`ResolveEmail` and everything downstream of it. Stage 4 was still grinding
+through the GitHub email waterfall for 20 prospects when this was written —
+that path is throttled to 30 search calls a minute by design, so it is slow
+rather than stuck. `CrossLinkToLinkedIn` reported honestly while it went
+(*"no LinkedIn profile was harvested for this handle"*).
 
-**It is also a demo-timing risk in its own right.** The judging slot is four
-minutes. A research phase that takes fifteen-plus minutes cannot be shown live and
-must be pre-warmed, which the plan already anticipates — but the magnitude should
-be measured rather than assumed.
+**ComposeOutreach with real evidence is therefore still unproven end to end**,
+and so is the `normalize()` punctuation fix, which I patched in this clone only.
+I am not claiming that fix works — only that it is necessary. Nothing here
+retires that question.
+
+## Demo timing, measured
+
+Research reached Lane W at roughly **twelve minutes**, and stage 4 had not
+finished at twenty. The judging slot is four minutes. Pre-warming was already
+the plan; the magnitude is now measured rather than assumed.
+
+## A defect in my own layer, found by running it
+
+The CDP event buffer prints one line per dropped event once it passes 2000:
+
+```
+[cdp] event buffer full at 2000; dropped 1 oldest (631 total)
+```
+
+Announcing the drop is right — a silent cap would be worse. Announcing it 631
+times is not. It should log on a threshold, not per drop. Mine to fix.
 
 ---
 
