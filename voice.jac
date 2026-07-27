@@ -17,6 +17,7 @@ dossier is flattened into a string at schedule time and read back verbatim.
 """
 
 import time;
+import json;
 import from datetime { datetime, timedelta, timezone }
 
 import from contracts { CallOutcome, LaneId }
@@ -490,6 +491,58 @@ def call_id_from(message: dict, fallback: str) -> str {
 }
 
 
+"""Extract the tool call from whichever key Vapi actually used.
+
+Vapi sends the invocation under `toolCallList` in some payloads and `toolCalls`
+in others, and which one arrives is not ours to choose. Reading only
+`toolCallList` is how a live call produced an EMPTY toolCallId and an EMPTY
+question: the wire carried `toolCalls`, every field silently defaulted, and the
+endpoint returned 200 with an empty answer. Nothing errored, which is the worst
+kind of failure because it looks like success. The earlier envelope proof passed
+for exactly this reason - it fed the shape this code expected instead of the
+shape Vapi sends.
+"""
+def first_tool_call(message: dict) -> dict {
+    for key in ["toolCallList", "toolCalls", "tool_calls"] {
+        raw: list = message.get(key, []) as list;
+        if raw {
+            entry: dict = raw[0] as dict;
+            return entry;
+        }
+    }
+    empty: dict = {};
+    return empty;
+}
+
+
+"""Tool arguments, whether Vapi sent them as an object or a JSON-encoded string."""
+def tool_arguments(call: dict) -> dict {
+    fn: dict = call.get("function", {}) as dict;
+    raw = fn.get("arguments", {});
+    if isinstance(raw, str) {
+        text: str = raw as str;
+        if not text.strip() {
+            blank: dict = {};
+            return blank;
+        }
+        try {
+            parsed = json.loads(text);
+        } except Exception {
+            bad: dict = {};
+            return bad;
+        }
+        if isinstance(parsed, dict) {
+            ok: dict = parsed as dict;
+            return ok;
+        }
+        other: dict = {};
+        return other;
+    }
+    direct: dict = raw as dict;
+    return direct;
+}
+
+
 """Answer a mid-call question straight from the graph. No network, no LLM.
 
 Responds in both the tool shape (`results`) and the custom-knowledge-base shape
@@ -510,12 +563,10 @@ walker:pub KbQuery {
 
         if self.message {
             vapi_call = call_id_from(self.message, self.call_id);
-            tool_calls: list = self.message.get("toolCallList", []) as list;
-            if tool_calls {
-                first: dict = tool_calls[0] as dict;
-                tool_call_id = str(first.get("id", ""));
-                fn: dict = first.get("function", {}) as dict;
-                args: dict = fn.get("arguments", {}) as dict;
+            call: dict = first_tool_call(self.message);
+            if call {
+                tool_call_id = str(call.get("id", ""));
+                args: dict = tool_arguments(call);
                 if not asked {
                     asked = str(args.get("question", ""));
                 }
@@ -598,12 +649,10 @@ async walker:pub BookInterview {
 
         if self.message {
             vapi_call = call_id_from(self.message, self.call_id);
-            tool_calls: list = self.message.get("toolCallList", []) as list;
-            if tool_calls {
-                first: dict = tool_calls[0] as dict;
-                tool_call_id = str(first.get("id", ""));
-                fn: dict = first.get("function", {}) as dict;
-                args: dict = fn.get("arguments", {}) as dict;
+            call: dict = first_tool_call(self.message);
+            if call {
+                tool_call_id = str(call.get("id", ""));
+                args: dict = tool_arguments(call);
                 if not start {
                     start = str(args.get("start_time", ""));
                 }
