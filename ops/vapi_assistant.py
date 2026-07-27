@@ -145,6 +145,14 @@ saying why you are calling THEM specifically, grounded in the research below - \
 the thing they wrote, the work they do. Then ask for a time. A booking request \
 with no reason attached is a robocall, and it gives them nothing to react to.
 
+## Make your FIRST sentence short
+Vapi does not speak a word until your first full sentence exists, so a long \
+opening clause is dead air on the line no matter how fast the rest arrives. \
+Your first sentence must be under twelve words. Put the detail in the second \
+sentence - by then you are already talking and they hear no gap.
+Good: "Good question, Becky." then the substance.
+Bad: one thirty-word sentence that has to be finished before anything is heard.
+
 ## Booking
 The moment they name any time that works - "Thursday at two", "tomorrow \
 afternoon", "how about Monday morning" - call `book_interview` immediately. Do \
@@ -207,7 +215,12 @@ def target() -> dict:
             # model has to guess. Smart formatting renders times, dates and
             # phone numbers as numerals, which is what the booking tool needs.
             "smartFormat": True,
-            "endpointing": 150,
+            # 150ms was costing real turn latency on a line where LiveKit's
+            # semantic endpointing is already deciding whether she has finished a
+            # thought. 100ms leans on the model rather than the timer; the
+            # measured cut-offs earlier tonight came from the STOP plan (noise),
+            # not from this.
+            "endpointing": 100,
         },
         # waitSeconds is the pause after the human stops before the agent starts.
         # Measured at 0.4 on call 019fa100: turn latency min 1.51s, median 1.80s,
@@ -220,7 +233,7 @@ def target() -> dict:
             "waitSeconds": 0.2,
             "smartEndpointingPlan": {
                 "provider": "livekit",
-                "waitFunction": "20 + 250 * sqrt(x) + 1200 * x^3",
+                "waitFunction": "20 + 150 * sqrt(x) + 900 * x^3",
             },
         },
         # Barge-in. numWords 0 means pure voice-activity detection, and on a real
