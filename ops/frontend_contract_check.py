@@ -818,7 +818,37 @@ async def check_websocket(base: str) -> None:
     sentinel = {"deep": {"nested": [1, 2, {"three": True}]}, "probe": "contract-check"}
     frame = {"kind": "reasoning_batch", "seq": 4242, "batch": sentinel,
              "note": "frontend_contract_check"}
-    await panels[0].send(json.dumps(frame))
+    try:
+        await panels[0].send(json.dumps(frame))
+        check("a client can SEND a frame (the backplane is usable)", True,
+              info="ensure_subscribed succeeded")
+    except Exception as e:  # noqa: BLE001
+        msg = f"{type(e).__name__}: {e}"
+        extra = ""
+        if "4503" in msg or "subscribe_unavailable" in msg:
+            extra = (
+                "\n         -> DIAGNOSIS: the socket CONNECTED and was then closed "
+                "on the first send. That is the\n            "
+                "`backplane` failing, not the route. Almost certainly "
+                "`[scale.websocket]` is missing from\n            jac.toml, so the "
+                "backplane defaults to Redis and Redis is not installed. Check the "
+                "server\n            log for: `WS ensure_subscribed failed for "
+                "walker:LiveFeed: RedisBackplane selected but\n            `redis` "
+                "is not installed`. Fix by restoring to jac.toml:\n            "
+                "[scale.websocket] ... backplane = \"memory\"\n         -> "
+                "NOTE every indirect signal still looks HEALTHY when this is "
+                "broken: the route logs as\n            registered, POST "
+                "/walker/LiveFeed still returns 405, and connect() succeeds. Only "
+                "a real\n            send reveals it. To a dashboard it is "
+                "indistinguishable from 'nobody is pumping'.")
+        check("a client can SEND a frame (the backplane is usable)", False,
+              msg + extra)
+        for p in panels:
+            try:
+                await p.close()
+            except Exception:  # noqa: BLE001
+                pass
+        return
 
     received, ctrl_frames = [], 0
     deadline = time.time() + 8

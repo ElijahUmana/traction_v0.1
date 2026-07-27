@@ -1,5 +1,7 @@
 # TRACTION — Frontend Integration Contract
 
+**In a hurry? Read [`FRONTEND_QUICKSTART.md`](FRONTEND_QUICKSTART.md) instead — it is the 10-minute version with the copy-pasteable polling loop, the enum table, and the five traps.** This page is the exhaustive reference.
+
 **You can build the entire dashboard from this document. You do not need to read our Jac source.**
 
 Every JSON payload below was **captured from the running server**, not hand-written. Regenerate them any time with `python3 ops/seed_and_capture.py`.
@@ -44,7 +46,22 @@ Every HTTP response is wrapped. **This is not the same shape as the WebSocket fr
 - `data.reports` is `[]` for functions. It is only populated for walkers (§5).
 - On failure `ok` flips to `false` and `error` is `{ "code", "message", "details" }`, e.g. `{"code": "EXECUTION_ERROR", ...}`.
 
-All endpoints are **`POST`**, always `Content-Type: application/json`, always with a JSON object body (`{}` when there are no arguments). A `GET` on the same path returns the signature, not the data.
+All endpoints are **`POST`**, always `Content-Type: application/json`, always with a JSON object body. A `GET` on the same path returns **404**, not the data and not a signature.
+
+> ### ⚠️ `{}` is NOT a safe body for `feed_since` / `feed_backlog`
+>
+> Both declare `since: int = 0`, but **that default is not applied when the field is absent.** Measured on the running server:
+>
+> | Body | Result |
+> |---|---|
+> | `{"since": 0}` | 200 |
+> | `{"since": "0"}` | 200 — strings are coerced |
+> | `{}` | **500** `'>=' not supported between instances of 'int' and 'str'` |
+> | `{"since": null}` | **500** `'>=' not supported between instances of 'int' and 'NoneType'` |
+>
+> Note the helper below defaults `args` to `{}` — so `call("feed_since")` with no second argument is a 500. So is `{ since: undefined }`, because `JSON.stringify` drops undefined keys. **Always pass an explicit integer**, and initialise your cursor to `0`, never `undefined`/`null`.
+>
+> This is a server-side bug, not intended behaviour. It is tracked, not papered over.
 
 ```js
 async function call(fn, args = {}) {
@@ -95,6 +112,8 @@ Rule of thumb: **`LaneId` and `CompletenessTier` are uppercase; everything else 
 The research lanes, sorted by `lane_id`. **`live_url` is the Browserbase URL you embed in the panel iframe** (§6).
 
 > **There are FIVE lanes, not four: A, B, C, D and W.** Do not hard-code four panels, and do not assume the list is fixed — render whatever the array contains. `W` is the warm-lead lane and behaves differently from the rest; see §2.1.1.
+>
+> ⚠️ **The rehearsal seeder only builds four.** `SeedRehearsalRun` (`feedseed.jac`, driven by `ops/seed_and_capture.py`, which §7 recommends for development) creates `A`–`D` only — **no `W`**. Build against the seeder and you will ship four panels, then meet a fifth on demo day. Map over the array and filter by `lane_id`; never index positionally.
 
 Request: `{}`
 
@@ -489,10 +508,15 @@ That seeding is rehearsal-only scaffolding (`feedseed.jac`) and is not part of t
 
 **So: point your dev server at `http://127.0.0.1:8000` and build however you like.** Nothing on our side needs to change, and nobody needs to flip `kind`.
 
-### Two failure modes worth recognising
+### Three failure modes worth recognising
 
-- **WebSocket 404 on `/ws/walker/LiveFeed`** → run **`jac install`**. The scale deps have not been resolved, so the WS routes never register; the decorator is silently ignored and the walker is served as a plain HTTP endpoint instead. (`[scale.websocket]` in `jac.toml` is *not* required for this — A/B verified. It only tunes limits.) `ops/restart.sh` fails loudly if the routes did not register.
-- **Every endpoint suddenly 500s with `'JacScaleUserManager' object has no attribute '_lock'`** → a stale `jac start` process was left holding a guest root while `.jac/data` was wiped underneath it. The server does not recover on its own. Fix: `ops/restart.sh`.
+- **WebSocket 404 on `/ws/walker/LiveFeed`** → run **`jac install`**. The scale deps have not been resolved, so the WS routes never register; the decorator is silently ignored and the walker is served as a plain HTTP endpoint instead. `ops/restart.sh` fails loudly if the routes did not register.
+- **WebSocket connects, then closes with `4503 subscribe_unavailable` the moment you send** → `[scale.websocket]` is missing from `jac.toml`, so the backplane **defaults to Redis**, and Redis is not installed. The server log says it outright: `WS ensure_subscribed failed for walker:LiveFeed: RedisBackplane selected but 'redis' is not installed`. The load-bearing line is `backplane = "memory"`.
+
+  This one is dangerous because **every indirect signal still looks healthy**: the route logs as registered, `POST /walker/LiveFeed` still returns 405, `/healthz` is 200, all five function endpoints are 200, and even `WebSocket.connect()` succeeds. Only an actual `send()` reveals it — and to a dashboard the result is indistinguishable from "nobody is pumping" (§4.3). A/B/A verified: with the section → send OK and broadcast delivered; without it → `4503` on send, twice.
+
+  `python3 ops/frontend_contract_check.py` catches this and names the cause.
+- **Every endpoint suddenly 500s with `'JacScaleUserManager' object has no attribute '_lock'`** → a stale `jac start` process was left holding a guest root while `.jac/data` was wiped underneath it. **It does not recover on retry** — measured 6/6 consecutive failures 0.6 s apart — and `/healthz` keeps returning `{"status":"ok"}` the entire time, so health checks do not catch it. Fix: `ops/restart.sh`.
 
 ---
 
@@ -500,12 +524,18 @@ That seeding is rehearsal-only scaffolding (`feedseed.jac`) and is not part of t
 
 | Method | Path | Body | Returns |
 |---|---|---|---|
-| POST | `/function/list_lanes` | `{}` | `LaneView[]` |
-| POST | `/function/list_prospects` | `{}` | `ProspectView[]` |
-| POST | `/function/get_run_state` | `{}` | `RunStateView` |
-| POST | `/function/feed_since` | `{"since": int}` | `FeedBatch` |
-| POST | `/function/feed_backlog` | `{"since": int}` | SSE stream |
+| POST | `/function/list_lanes` | `{}` | `data.result` → `LaneView[]` |
+| POST | `/function/list_prospects` | `{}` | `data.result` → `ProspectView[]` |
+| POST | `/function/get_run_state` | `{}` | `data.result` → `RunStateView` |
+| POST | `/function/feed_since` | `{"since": int}` ⚠️ never `{}` | `data.result` → `FeedBatch` |
+| POST | `/function/feed_backlog` | `{"since": int}` ⚠️ never `{}` | SSE stream |
+| POST | `/walker/PlanCampaign` | `{}` | **`data.reports[0]`** |
+| POST | `/walker/RunResearch` | `{"run": …}` | **`data.reports[0]`** |
 | WS | `/ws/walker/LiveFeed` | frame object | broadcast echo |
 | GET | `/healthz` | — | `{"status":"ok"}` |
 
+**Walkers are not functions.** A walker's payload is at **`data.reports[0]`**, not `data.result` — the opposite of every `/function/` endpoint above. `GET` on a walker path is a 404, so always probe with `POST`; a `422` means *registered, wrong arguments* (`RunResearch` requires a `run` field), while a `404` means the walker is genuinely unregistered and is a backend bug.
+
 Read-side contract owner: **verifier**. If a field you need is missing, ask — do not read it out of the graph yourself.
+
+**Verify this document:** `python3 ops/frontend_contract_check.py` asserts every claim on this page against a live server from the consumer's side — envelope shape, exact field names and types, undocumented extra fields, enum value casing, `jid` stability, cursor semantics, SSE grammar, walker registration and the full WebSocket path. Exit 0 means the contract holds; exit 1 prints exactly which claim broke.
