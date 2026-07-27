@@ -32,15 +32,22 @@ ops/test.sh                 # run the suite (no API keys needed)
 
 ### Every endpoint returns 500, `'JacScaleUserManager' object has no attribute '_lock'`
 
-The guest root was lost. **Restarting does NOT fix this** — the corruption is written into `.jac/data/anchor_store.db` and survives a restart.
+`ops/restart.sh` now detects and repairs this before it serves a request, so you should not see it again. If you do:
 
 ```bash
-ops/warm.sh restore
+rm .jac/data/users.db && ops/restart.sh    # keeps the graph
+ops/warm.sh restore                        # or restore the snapshot, also keeps the graph
 ```
 
-**Do not run `ops/restart.sh --clean`** unless you are willing to lose the pre-warmed run. Drilled recovery: corrupt → `500 500 500` → restore → `200 ×5` with `lane_count=4, prospect_count=3, reasoning_count=6` intact.
+**What is actually broken** (jaclang 0.34.7, read out of the runtime that ships inside the `jac` binary):
 
-Prevention: never wipe `.jac/data` while a server is live, and give the demo server a dedicated port and data dir so another operator's `pkill -f "jac start"` cannot reach it.
+`JacScaleUserManager.postinit` overrides `UserManager.postinit` and never calls it, and the parent is the only place that sets `self._lock`. So the scale user manager has no `_lock`, from boot. Harmless until the guest root id recorded in `.jac/data/users.db` is absent from `.jac/data/anchor_store.db` — then every request takes the guest self-heal branch, which calls `reset_root()`, the one method the scale subclass does *not* override, whose first statement is `with self._lock`. `reset_root` **is** the repair path, so it can never repair itself. The server 500s forever.
+
+So the corruption lives in **`users.db`** (a guest root_id pointing at nothing), not in `anchor_store.db`. `anchor_store.db` is the graph and is fine — which is why dropping `users.db` alone fixes it without losing the pre-warm. There are no real accounts in `users.db` to lose: every TRACTION endpoint is anonymous.
+
+**This has nothing to do with `[scale.websocket]`.** A/B verified — 60 anonymous POSTs against two copies of this repo, with and without the block, `OK=60 FAIL=0` both ways. `jac0core/runtime.jac:85 _scale_provider` is a bare `try { import jaclang.scale.plugin } except ImportError` with no jac.toml gate, and scale ships inside the binary, so it loads either way. Both copies also registered `/ws/walker/LiveFeed`. Removing the block buys nothing and costs nothing. Leave it alone.
+
+Prevention: never wipe `.jac/data` while a server is live, and give the demo server a dedicated port and data dir so another operator's `pkill -f "jac start"` cannot reach it. Wiping one of the two db files without the other is what creates the divergence.
 
 ### The server was fine and then died a few minutes later
 
