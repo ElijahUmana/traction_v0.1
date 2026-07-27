@@ -90,6 +90,50 @@ Measured before/after with graph counts — this is what it looks like:
 dashboard shows no error, and nothing happened. Always confirm a stage moved the
 graph, never that it returned 200.
 
+### 0.16 ⛔ An imported enum MEMBER referenced in a `def:pub` body can vanish at request time
+
+Observed live: `POST /function/graph_health` began returning 500 with
+`name 'CompletenessTier' is not defined` — while `jac check` stayed completely
+green, because it is a runtime symbol-resolution failure, not a type error.
+
+Nothing about the endpoint changed. A **new module joined `main.jac`'s import
+registry**, the init order shifted, and the symbol stopped resolving inside the
+function body.
+
+**The distinction that matters — same symbol, opposite exposure:**
+
+| Use site | Resolved | Exposed |
+|---|---|---|
+| node field default — `has tier: CompletenessTier = CompletenessTier.DROPPED;` | once, at module load, with that module's own import already bound | **no** |
+| `def:pub` body — `if p.tier == CompletenessTier.DROPPED { ... }` | per request, after every module has loaded in whatever order the registry settled on | **YES** |
+
+So a schema file declaring enum-typed fields is safe. An **endpoint body** that
+evaluates an enum member is not, and it fails only once someone adds or reorders
+an import somewhere else entirely.
+
+**Fix — remove the dependency rather than add an import.** Every enum in
+`contracts` is str-backed, so the member IS the string:
+
+```jac
+if p.tier == CompletenessTier.DROPPED { ... }   # resolves at request time
+if p.tier == "DROPPED" { ... }                  # ✅ cannot fail to resolve
+```
+Adding `import from contracts { CompletenessTier }` is the tempting fix and it
+is usually a **no-op** — the import is typically already there (it was, in both
+`schema.jac` and `main.jac`). That leaves the real problem live while looking
+like a fix. Comparing to the literal is immune by construction rather than
+immune until the next module lands.
+
+Trade-off, stated honestly: you lose compile-time checking of that one
+comparison. In an endpoint that has to keep answering while modules are added
+around it, that is the right trade. Leave a comment, or someone will "tidy" it
+back to the enum member.
+
+**Audit your own endpoints for this.** Confirmed exposed at the time of writing:
+`bridge.jac`'s `_lane_source` / `_lane_title` (`LaneId.D/W/A`) and
+`_prospect_view` (`EvidenceSource.LINKEDIN/GITHUB`, `CompletenessTier.S/.A`).
+`main.jac` was swept and is clean.
+
 ### 0.2 Omitting `= []` on a walker list makes it a REQUIRED spawn parameter
 
 ```jac
