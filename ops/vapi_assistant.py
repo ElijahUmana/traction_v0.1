@@ -236,6 +236,14 @@ def target() -> dict:
             f"Hi, this is an assistant calling for {SPOKEN_FOUNDER} about the "
             "email you replied to. I'll follow up by email instead. Thanks."
         ),
+        # The last thing spoken on every call, and the field that caught me out.
+        # Overwriting firstMessage and the system prompt is not enough: the stock
+        # template's endCallMessage survived both, and on call 019fa108 the final
+        # words the prospect heard were "Thank you for scheduling with Wellness
+        # Partners. Your appointment is confirmed." A clinic sign-off is bad
+        # anywhere; as the closing line in front of judges it is the worst
+        # possible placement.
+        "endCallMessage": "Thanks again, and speak soon.",
         # Let the human cut off the opening line. They will - "who is this?" lands
         # on top of the first sentence, and an agent that ignores it is a robocall.
         "firstMessageInterruptionsEnabled": True,
@@ -328,7 +336,34 @@ def main() -> int:
     if missing:
         print(f"\n!! these did NOT persist: {missing}")
         return 1
+
+    # Sweep the WHOLE object for stock-template text rather than checking the
+    # fields I remembered. endCallMessage survived every earlier patch precisely
+    # because it was never on that list, and it is spoken last on every call.
+    # Any string field can carry the template, so any string field gets checked.
+    def strings(obj, path=""):
+        if isinstance(obj, dict):
+            for k, v in obj.items():
+                yield from strings(v, f"{path}.{k}")
+        elif isinstance(obj, list):
+            for i, v in enumerate(obj):
+                yield from strings(v, f"{path}[{i}]")
+        elif isinstance(obj, str):
+            yield path, obj
+
+    stock = [
+        (p, v[:120])
+        for p, v in strings(after)
+        if any(w in v for w in ("Wellness Partners", "Riley", "multi-specialty"))
+    ]
+    if stock:
+        print("\n!! STOCK TEMPLATE TEXT IS STILL LIVE ON THIS ASSISTANT:")
+        for p, v in stock:
+            print(f"   {p} = {v!r}")
+        return 1
+
     print("\nOK: prompt, barge-in, endpointing and voicemail detection all persisted.")
+    print("OK: no Wellness Partners / Riley text anywhere on the assistant.")
     return 0
 
 
