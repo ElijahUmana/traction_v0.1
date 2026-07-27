@@ -457,6 +457,18 @@ The "see more" expansion over-captures: **six other named people, with employers
 
 **Why it matters beyond tidiness:** the dashboard renders `linkedin_quote` directly, and `ComposeOutreach` cites it. The demo email happened to be correct, but the underlying node is not clean, so this is one bad draw away from quoting a stranger's name back at the recipient. Not demo-blocking today; it is the same class of bug as the one above.
 
+### CLOSED — a live Twilio credential was committed and nearly published
+
+Two Vapi call dumps (`evidence/voice_call_019fa100.json`, `evidence/voice_call_019fa108.json`) contained a real **Twilio Account SID**. GitHub push protection blocked every push for ~20 minutes, which is the only reason it was caught.
+
+**Nothing leaked** — the commits had not reached GitHub. But this repo is **public**, and the next successful push would have published a live credential permanently.
+
+Fixed by rewriting the 5 pending commits in an isolated clone (so no working tree was disturbed), redacting every `AC…`/`SK…` token across all files, verifying all 5 commits clean, and pushing `86dfec3..a88f077`. GitHub's "allow this secret" link was **not** used — on a public repo that publishes it.
+
+`ops/secret_scan.sh` now scans for nine credential shapes (Twilio, Anthropic, OpenAI, AWS, Google, Slack, GitHub PAT, private-key blocks) and is the guard against a repeat. Current state: **107 files scanned, clean.**
+
+The general lesson, worth stating because it will recur: **provider call dumps carry provider-side account identifiers.** Redact at write time or keep them out of the repo.
+
 ### OPEN — the full-repo test run does not execute
 
 See §8. Per-file runs pass; the aggregate kills the xdist worker.
