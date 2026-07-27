@@ -6,9 +6,89 @@
 
 **Where a raw number is flattering but not defensible, this file reports the validated number and shows the gap.** A judge who spot-checks one inflated figure stops believing the rest of the document.
 
-§10 lists what is **not** proven, and §11 lists an **open defect that blocks the demo**.
+**Start at §0 — the checkpoint state.** §10 lists what is **not** proven; §11 and §12 list **open defects that block the demo**; §13 is the one operational rule that must not be broken during setup.
 
 ---
+
+## 0. CHECKPOINT STATE — the one paragraph we will defend
+
+*Written at the 17:50 partial submission. This is the claim to make out loud; every line below it is the receipt.*
+
+> **Planning, four-lane parallel research, the analyst reasoning feed and the convergence multiplier are verified working end to end. Lane W opens a real LinkedIn profile live and extracts verbatim evidence. The browser stack, the GitHub email gate, the dashboard feed and the outreach-to-booking conversion loop are each independently proven against real services. What is NOT proven is the joined-up chain driven over HTTP, because a server-runtime fault currently makes every endpoint fail.**
+
+**We are deliberately claiming less than the sum of the parts.** Each stage below ran against real services and produced a real artifact. They have not been shown running as one continuous HTTP-driven pipeline. A judge who presses the button gets the server fault, so we say so first rather than being corrected.
+
+### Verified — in-process, no server involved
+
+| Claim | Measurement |
+|---|---|
+| `PlanCampaign` drafts a real ICP with `by llm()` | `source: llm`, 8 keywords, 8 first-person pain phrases |
+| …and cannot hard-fail | proven under a **genuine** LLM auth failure — still attached a usable ICP, reason surfaced in `source` |
+| `RunResearch` fans out with `flow`/`wait` | **3 lanes, 87 search probes, 265 Reasoning lines** in one run |
+| **The convergence thesis** | lane A surfaces a human, lane D independently converges: `prospects=1 converged=1` |
+| Typed edges + str-backed enums round-trip the persistent graph | `jac test schema.jac` **10/10**, survives process restart |
+| Lane W against the real warm lead | identity and email agreeing, 2 verbatim Evidence nodes with source URLs, no duplicate on re-run |
+
+Independently proven and detailed below: the pure-Jac browser stack (§1), Lane D and the email gate (§2), the dashboard feed (§3), the conversion loop and Vapi (§6).
+
+### NOT verified — stated plainly
+
+- **The joined-up HTTP chain.** `PlanCampaign → RunResearch → gate → ComposeOutreach` has never completed as one continuous run.
+- **`ComposeOutreach` on Lane W's real prospect.** Composed output is proven on a seeded prospect (§6); it has not been run on the live Lane W node.
+- **Two walkers are unreachable over HTTP** — see §12.
+
+### ⚠️ OPEN DEFECT — the server (owner: SERVERFIX)
+
+```
+POST /function/graph_health  ->  HTTP 500 on request #1
+POST /walker/<anything>      ->  'JacScaleUserManager' object has no attribute '_lock'
+```
+Reproduced on a clean `.jac/data` with no stale process. **It never recovers**; once degraded, every endpoint fails including plain reads. Leading hypothesis is the scale subsystem half-initialising — the log prints `Redis connection failed: 'NoneType' object has no attribute 'from_url'` on every start even though `jac.toml` sets `backplane = "memory"`, which would literally explain a *missing* `_lock` attribute. A second candidate is `[scale.websocket]` itself; that one is **untested** — an attempt to disable it never brought the server up, so it distinguishes nothing.
+
+**Contingency:** every verified row in the table above was produced in-process via `jac run`, with no server. A script-driven demo is unaffected by this defect.
+
+---
+
+## 12. Two walkers are unreachable over HTTP
+
+`POST /walker/<Name>` spawns on **root**. A walker whose only entry ability triggers on a node type therefore never fires — **HTTP 200, zero reports, graph untouched, no error anywhere.**
+
+Measured with before/after graph counts:
+```
+[02 planned]              founders=1 runs=0 lanes=0 reasoning=0
+    spawn-on-ROOT    reports: 0
+[03a after root-spawn]    founders=1 runs=0 lanes=0 reasoning=0   <- IDENTICAL
+    spawn-on-FOUNDER reports: 1
+[03 researched]           founders=1 runs=1 lanes=3 reasoning=265
+```
+
+| Walker | Trigger | Consequence |
+|---|---|---|
+| `RunResearch` | `Founder entry` only | **the "Go" button** returns 200 and does nothing |
+| `LaneW` | `Lane entry` only | silent no-op if called over HTTP; works when spawned internally |
+
+Fix is either a `Root entry` ability that finds the anchor and `visit`s it (what `PlanCampaign` does, which is why it works from a bare spawn), or the node-scoped `/walker/<Name>/{nd}` route.
+
+**This is the most expensive failure shape we found today**, because every other signal reports healthy. It is why the standing rule in `docs/JAC_GOTCHAS.md` is: *never accept a 200 as proof a stage ran — confirm the graph moved.*
+
+---
+
+## 13. One process at a time
+
+Every `jac run` and `jac start` in a checkout reads and writes the same `.jac/data` anchor store, unsynchronised. Verified back-to-back with nothing in between:
+
+```
+rm -rf .jac
+jac run lane_w_proof.jac   ->  LANE_W_OK=True, real prospect written
+jac run _inspect.jac       ->  that prospect GONE; a different founder and three
+                               unrelated fixture prospects, each duplicated 3x
+```
+An earlier inspection found **7 Founder nodes**, six identical, none created by the inspecting run. No product module has a `with entry` block, so nothing seeds on import — concurrent writers is the only explanation that fits, and it is a strong candidate for the same root cause as the server fault above.
+
+**Runbook rule: during setup and during the demo, exactly one process may touch the graph.** Parallel work needs a separate checkout; the store is per-directory.
+
+---
+
 
 ## 1. Pure-Jac browser automation, live against Browserbase
 
