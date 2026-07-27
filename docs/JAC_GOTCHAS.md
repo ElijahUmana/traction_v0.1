@@ -474,6 +474,39 @@ lane.probes() after one probe from each module: 2   <- both, incompatible
 ```
 If you need a node or edge, add it to `schema.jac` — never declare it locally.
 
+## 8e. ⛔ ONE PROCESS AT A TIME — the graph store is shared and unsynchronised
+
+Every `jac run` and `jac start` in a project directory reads and writes the SAME
+`.jac/data` anchor store. Several people (or agents) working in one checkout
+will silently stomp each other's graph.
+
+Observed, back-to-back in one shell with nothing in between:
+```
+rm -rf .jac
+jac run lane_w_proof.jac   ->  LANE_W_OK=True, real prospect written   ✅
+jac run _inspect.jac       ->  that prospect GONE; a different founder
+                               and three unrelated fixture prospects,
+                               each duplicated 3x
+```
+An earlier inspection found **7 Founder nodes**, six identical, none created by
+the inspecting run. No product module has a `with entry` block, so nothing
+seeds on import — the only explanation that fits is concurrent writers.
+
+**Consequences:**
+- `rm -rf .jac` deletes a store another process is mid-write on.
+- Counts from any instrumentation are untrustworthy while others are running.
+- This is a strong candidate for the unrecoverable
+  `'JacScaleUserManager' object has no attribute '_lock'` 500s: N processes
+  against one SQLite anchor store is exactly that shape.
+
+**RUNBOOK RULE: during setup and during the demo, exactly one process may touch
+the graph.** Stop every other `jac run` / `jac start` in the directory first.
+Seeding with a proof script and then demoing through the server is only safe if
+the seed has finished and nothing else is live.
+
+If you need to work in parallel, take a separate checkout — the store is
+per-directory, so different working copies are isolated.
+
 ## 9. Stale state
 
 `jac clean --all --force` (or `rm -rf .jac/`) when you see
