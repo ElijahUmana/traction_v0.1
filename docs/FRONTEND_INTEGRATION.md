@@ -491,7 +491,7 @@ That seeding is rehearsal-only scaffolding (`feedseed.jac`) and is not part of t
 
 ### Two failure modes worth recognising
 
-- **WebSocket 404 / connection refused on `/ws/walker/LiveFeed`** → the server was started without `[scale.websocket]` in `jac.toml`, or without `jac install`. The decorator is then silently ignored and the walker is served as a plain HTTP endpoint. `ops/restart.sh` checks for this and fails loudly.
+- **WebSocket 404 on `/ws/walker/LiveFeed`** → run **`jac install`**. The scale deps have not been resolved, so the WS routes never register; the decorator is silently ignored and the walker is served as a plain HTTP endpoint instead. (`[scale.websocket]` in `jac.toml` is *not* required for this — A/B verified. It only tunes limits.) `ops/restart.sh` fails loudly if the routes did not register.
 - **Every endpoint suddenly 500s with `'JacScaleUserManager' object has no attribute '_lock'`** → a stale `jac start` process was left holding a guest root while `.jac/data` was wiped underneath it. The server does not recover on its own. Fix: `ops/restart.sh`.
 
 ---

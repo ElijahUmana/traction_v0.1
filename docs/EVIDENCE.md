@@ -223,17 +223,25 @@ Frames captured: `evidence/ws-frame-sample.json`, `evidence/sse-sample.txt`, `ev
 
 ## 4. Three jac 0.34.7 constraints that dictated the feed design
 
-Each was measured, and each silently breaks a live dashboard.
+Each was measured. §4.2 and §4.3 dictated the feed design; §4.1 is a correction to an earlier claim of mine.
 
-### 4.1 WebSocket routes are silently dropped without `[scale.websocket]`
+### 4.1 A 404 on the WebSocket route means `jac install` has not resolved the scale deps
 
-`@restspec(protocol=APIProtocol.WEBSOCKET)` is ignored with **no error and no warning**; `jac check` passes; the walker is served as an ordinary HTTP endpoint. Proof it was not our code: **Jac's own fixture walkers** from `jac/jaclang/scale/tests/fixtures/test_api.jac` (`EchoMessage`, `BroadcastChat`), copied in verbatim, 404'd identically.
+**CORRECTION.** This section previously claimed `[scale.websocket]` in `jac.toml` was REQUIRED and that omitting it silently downgraded the walker to plain HTTP. **That was wrong, and it was stated to the whole team.**
 
-| | before | after `[scale.websocket]` + `jac install` |
+A/B verified afterwards: with the `[scale.websocket]` block **removed** from `jac.toml`, the server still logs `Registered WebSocket walker endpoint: /ws/walker/LiveFeed` and the route still returns **101**. GHIDENT reached the same conclusion independently (60 anonymous POSTs against two copies of the repo, with and without the block, identical results) — `jac0core/runtime.jac` imports the scale plugin in a bare `try/except ImportError` with no jac.toml gate, and scale ships inside the binary.
+
+What actually happened: the original 404 was on a fresh spike where **`jac install` had never been run**, so the scale deps were unresolved. Adding the toml block and running `jac install` in the same step confounded the two, and I attributed the fix to the wrong half.
+
+**The real rule: if `/ws/walker/<Name>` 404s, run `jac install`.** The observed before/after is still valid, it just has a different cause:
+
+| | before `jac install` | after |
 |---|---|---|
 | `GET /ws/walker/LiveFeed` | **404** | **101** Switching Protocols |
-| `POST /walker/LiveFeed` | **200** (wrongly HTTP) | **405** (correct) |
+| `POST /walker/LiveFeed` | **200** (wrongly HTTP) | **405** (correct — WS targets are not HTTP-reachable) |
 | server log | *(silent)* | `Registered WebSocket walker endpoint: …` |
+
+The `[scale.websocket]` block is kept anyway, for a real reason: the default rate limit is 20 messages/sec per connection, which would throttle the dashboard pump. It tunes; it does not enable.
 
 ### 4.2 A WebSocket walker cannot read the live graph
 

@@ -19,12 +19,12 @@ temperature = 0.2
 [serve]
 port = 8000
 
-# REQUIRED for the live dashboard. Without this section the scale WebSocket
-# subsystem is never resolved and `@restspec(protocol=APIProtocol.WEBSOCKET)`
-# is silently IGNORED - the walker is served as a plain HTTP endpoint, `jac
-# check` still passes, and ws://.../ws/walker/LiveFeed returns 404 with no
-# error anywhere. Verified on jac 0.34.7 against jac's own fixture walkers.
-# Run `jac install` after changing this.
+# WebSocket tuning for the live dashboard. NOT required for WS to work - A/B
+# verified: with this block removed, /ws/walker/LiveFeed still registers and
+# still returns 101. (An earlier note in this repo claimed it was required; that
+# was wrong. The 404 that prompted it was fixed by `jac install` resolving the
+# scale deps, not by this block.) Kept because the limits below are deliberate:
+# the default 20 msg/sec would throttle the dashboard pump.
 [scale.websocket]
 max_connections_per_target = 5000
 max_anonymous_per_target = 500

@@ -16,7 +16,7 @@ The demo names that person, emails that person, calls that person, and books tha
 
 ## WHERE JAC RUNS
 
-> The rubric asks us to point at it in the repo. Here is the map. **97.12% of tracked source is `.jac`** (11,159 lines vs 330 — verify with `ops/jac_audit.sh`). There is **no Python in the product path**; the 330 non-Jac lines are all operational tooling under `ops/`.
+> The rubric asks us to point at it in the repo. Here is the map. **94.14% of tracked source is `.jac`** (13894 lines vs 864 — verify with `ops/jac_audit.sh`). There is **no Python in the product path**; the 864 non-Jac lines are all operational tooling under `ops/`.
 
 | Layer | Where Jac does the work | File |
 |---|---|---|
@@ -61,9 +61,9 @@ Then, to develop against a populated graph without waiting for a live research r
 python3 ops/seed_and_capture.py
 ```
 
-Tests (no API keys needed):
+Tests (no API keys needed — 20/20 green):
 ```bash
-jac clean --all --force && jac test
+ops/test.sh
 ```
 
 Jac percentage audit:
@@ -73,7 +73,7 @@ ops/jac_audit.sh
 
 ### Two things that will cost you an hour if you don't know them
 
-1. **`jac.toml` must contain `[scale.websocket]`.** Without it, `@restspec(protocol=APIProtocol.WEBSOCKET)` is **silently ignored** — no error, `jac check` still passes, the walker is served as a plain HTTP endpoint, and `ws://…/ws/walker/LiveFeed` 404s. Run `jac install` after changing it.
+1. **Run `jac install` before serving.** Until the scale deps are resolved, `@restspec(protocol=APIProtocol.WEBSOCKET)` is **silently ignored** — no error, `jac check` still passes, the walker is served as a plain HTTP endpoint, and `ws://…/ws/walker/LiveFeed` 404s. (`[scale.websocket]` in `jac.toml` is not required for this; it only tunes rate limits.)
 2. **Use `ops/restart.sh`.** Wiping `.jac/data` while a stale `jac start` is alive bricks the server: every endpoint 500s with `'JacScaleUserManager' object has no attribute '_lock'` and it does not recover. The script kills completely, waits for the port, then wipes, then warms up, then verifies WS registration.
 
 More in `docs/JAC_GOTCHAS.md`.
@@ -86,6 +86,7 @@ More in `docs/JAC_GOTCHAS.md`.
 |---|---|
 | [`docs/FRONTEND_INTEGRATION.md`](docs/FRONTEND_INTEGRATION.md) | The complete frontend contract. Every endpoint, the exact envelopes, the WebSocket frame shape, the SSE format, the Browserbase iframe pattern. All JSON captured from the running server. **You can build the dashboard from this alone.** |
 | [`docs/EVIDENCE.md`](docs/EVIDENCE.md) | Real artifacts for every claim, each with its reproducing command — and an explicit section listing what is **not** proven. |
+| [`docs/RUNBOOK.md`](docs/RUNBOOK.md) | **Demo day.** The five commands, every failure mode we actually hit and its fix, and the pre-demo checklist. |
 | [`docs/JAC_GOTCHAS.md`](docs/JAC_GOTCHAS.md) | Toolchain traps found the hard way. |
 
 ---
@@ -97,7 +98,7 @@ root
  └── Founder ──:Targets:──▶ ICP
       ├──:HasWarmLead:──▶ Prospect
       └──:Runs:──▶ ResearchRun
-           └──:HasLane:──▶ Lane {A,B,C,D}      # A/B/C LinkedIn (visible browsers), D GitHub (programmatic)
+           └──:HasLane:──▶ Lane {A,B,C,D,W}    # A/B/C LinkedIn (visible browsers), D GitHub (programmatic), W warm lead
                 ├──:Emitted:──▶ Reasoning       # the analyst-voice sidebar
                 └──:Surfaced:──▶ Prospect       # 2+ lanes surfacing one human == convergence
                      ├──:HasEvidence:──▶ Evidence   {lane, confidence on the edge}
@@ -117,4 +118,4 @@ The email gate is a **hard gate**. No email, no pitch — and the drops stay vis
 
 ## Status
 
-See `docs/EVIDENCE.md` §9 for the honest list of what is proven and what is not.
+See [`docs/EVIDENCE.md`](docs/EVIDENCE.md) §10 for the honest list of what is proven and what is not, and §11 for an open defect that blocks the demo.

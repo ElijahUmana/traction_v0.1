@@ -72,7 +72,11 @@ set -a && . ./.env && set +a && tail -f /dev/null | jac start main.jac --no-clie
 
 ### `ws://…/ws/walker/LiveFeed` returns 404
 
-`[scale.websocket]` is missing from `jac.toml`, or `jac install` has not been run since it was added. Without it, `@restspec(protocol=APIProtocol.WEBSOCKET)` is **silently ignored** — no error, `jac check` still passes, and the walker is served as a plain HTTP endpoint. `ops/restart.sh` fails loudly if the routes did not register.
+Run **`jac install`** — the scale deps are unresolved, so the WS routes never register. `@restspec(protocol=APIProtocol.WEBSOCKET)` is then **silently ignored**: no error, `jac check` still passes, and the walker is served as a plain HTTP endpoint.
+
+`[scale.websocket]` in `jac.toml` is **not** required for this — A/B verified, routes register and return 101 with the block removed. It only tunes limits (the default 20 msg/sec would throttle the dashboard pump). An earlier claim of mine that it was required was wrong.
+
+`ops/restart.sh` fails loudly if the routes did not register.
 
 ### The tunnel URL "cannot be resolved" from this laptop
 
