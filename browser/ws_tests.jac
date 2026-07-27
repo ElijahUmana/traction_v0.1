@@ -1,4 +1,4 @@
-"""Test annex for the pure-Jac WebSocket layer.
+"""Standalone tests for the pure-Jac WebSocket layer.
 
 Pure functions only — no sockets, no network, no graph. Runs anywhere,
 including with no API keys set.
@@ -7,6 +7,15 @@ including with no API keys set.
 """
 
 import struct;
+# Explicit imports because this is a STANDALONE test module, not a `.test.jac`
+# annex. As an annex, its 12 tests were attributed to EVERY module that
+# transitively imports ws - page, session, session_proof, live_proof, cdp - and
+# pytest-xdist workers disagreed about which, which aborted collection for the
+# entire repo ("no tests ran", exit 3).
+import from browser.ws {
+    parse_ws_url, mask_payload, build_frame, JacWS,
+    OP_CONT, OP_TEXT, OP_BINARY, OP_CLOSE, OP_PING, OP_PONG, WS_GUID
+}
 
 test "connectUrl with a query string and no path keeps the query out of the host" {
     # THE regression. A Browserbase connectUrl is 'wss://host?apiKey=...' with
