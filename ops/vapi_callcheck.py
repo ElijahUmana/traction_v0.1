@@ -250,23 +250,32 @@ def report(call: dict) -> int:
                 return True
         return False
 
+    # The scripted opener is always the first bot turn, so it is skipped
+    # unconditionally - it is written in advance and says nothing she did not
+    # already know. Measure from the user turn immediately BEFORE the answer,
+    # not from her first words overall, or a long conversation reports a
+    # nonsense figure (an earlier version returned -9.30s by comparing the
+    # opener against a later question).
     first_substantive = None
+    preceding_user = None
+    seen_bot = False
     for i, m in enumerate(convo):
         if m.get("role") != "bot":
             continue
-        text = (m.get("message") or "")
-        if i == 0 and first_user is None:
-            continue  # the scripted opener, before she has said anything
-        if m is first_bot and first_user is None:
+        if not seen_bot:
+            seen_bot = True          # this is the opener
             continue
-        if is_filler(text):
+        if is_filler(m.get("message") or ""):
             continue
-        first_substantive = m
+        prev = next((p for p in reversed(convo[:i]) if p.get("role") == "user"), None)
+        if prev is None:
+            continue
+        first_substantive, preceding_user = m, prev
         break
 
     ttfs = None
-    if first_substantive is not None and first_user is not None:
-        ttfs = start(first_substantive) - end(first_user)
+    if first_substantive is not None:
+        ttfs = start(first_substantive) - end(preceding_user)
 
 
     turns = []
@@ -308,7 +317,7 @@ def report(call: dict) -> int:
           else "time to first word  : n/a")
     if ttfs is not None:
         said = (first_substantive.get("message") or "")[:60]
-        print(f"first real answer   : {ttfs:.2f}s after her first words -> {said!r}")
+        print(f"first real answer   : {ttfs:.2f}s after she finished -> {said!r}")
     else:
         print("first real answer   : NEVER - every bot turn was opener or filler")
     if turns:
