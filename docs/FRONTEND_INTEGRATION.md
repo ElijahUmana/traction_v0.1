@@ -478,11 +478,12 @@ Use the script rather than `jac start` directly. It guarantees the old process i
 The launch line it runs, and why each half matters:
 
 ```bash
-set -a && . ./.env && set +a && sleep infinity | jac start main.jac --no-client
+set -a && . ./.env && set +a && tail -f /dev/null | jac start main.jac
 ```
 
 - **`. ./.env`** — `jac start` does **not** read `.env`. Without this, litellm never sees `ANTHROPIC_API_KEY` and **every `by llm()` call silently returns null while the server looks perfectly healthy.** No error, no warning; walkers just quietly produce nothing.
-- **`sleep infinity |`** — `jac start` exits on stdin EOF. `< /dev/null` serves fine for a while, then logs `drain: started` and dies mid-session. This holds stdin open for the life of the process.
+- **`tail -f /dev/null |`** — `jac start` exits on stdin EOF. `< /dev/null` serves fine for a while, then logs `drain: started` and dies mid-session. This holds stdin open for the life of the process. (This line previously read `sleep infinity |`, which is a GNU extension that **does not exist on macOS** — BSD `sleep` rejects it and the server dies on launch. `ops/restart.sh` has always used `tail -f /dev/null`; the doc was wrong, not the script.)
+- **no `--no-client`** — the web client and the walkers are one program now. That flag skips building and mounting the client, so `/` serves nothing while the API looks perfectly fine.
 
 To develop against a populated graph without waiting for a real research run:
 

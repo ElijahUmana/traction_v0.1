@@ -431,6 +431,100 @@ Verified the shared path is consistent: an anonymous `walker:pub` write
    persisted anchors. Stop the server, `rm -rf .jac/data/`, restart.
 8. Reader responses are cached 60s client-side; a writer call invalidates them.
 
+### ⛔ 7.0a A 401 can also mean a PLAIN `def` elsewhere is shadowing your `def:pub`
+
+The 401/405 table above assumes one declaration per name. If two modules declare
+the same function name and only one is `:pub`, the **private one wins the
+route** and every anonymous call gets 401 — even though your `def:pub` is
+correct, imported, and registered.
+
+Measured while wiring the web client. `bridge.jac` declared
+`async def:pub draft_outreach() -> WorkspaceView` (the UI's contract function)
+while `outreach.jac` already had `def draft_outreach(...) -> EmailDraft by llm()`
+— a plain, private byLLM helper that happened to share the name:
+
+```
+POST /function/draft_outreach    -> 401   {"code":"UNAUTHORIZED"}
+POST /function/build_personas    -> 200   <- identical shape, no name clash
+POST /function/run_signal_search -> 200   <- identical shape, no name clash
+```
+After renaming the private helper to `draft_outreach_email` and changing nothing
+else:
+```
+POST /function/draft_outreach    -> 200
+```
+
+The tell is that **one** endpoint 401s while its identically-declared siblings
+return 200. That rules out a missing `:pub` on your own function and points at a
+duplicate name elsewhere in the program. `rg -n '\bthe_name\b' *.jac` settles it
+in one command. `jac check` is green throughout.
+
+This is the function-level cousin of 8d (archetypes) and 8d-ii (objs): in every
+case Jac resolves a duplicate name across modules silently, and differently from
+how you would expect. **Grep before you name a new endpoint.**
+
+---
+
+## 7a. ⛔ The client bundle fails on `@jac/wasm_host`, and jac's own suggested fix does not work
+
+Symptom, on a `kind = "web-app"` project: the API is perfect — `graph_health`
+200, smoke gate 12/12, WebSocket registered — and `GET /` returns **503**. The
+server log carries the real cause, several hundred lines above the request:
+
+```
+⚠ Failed to build client bundle
+│  Module "@jac/wasm_host" is not installed.
+│  Quick fix:  $ jac install --npm @jac/wasm_host
+[vite]: Rollup failed to resolve import "@jac/wasm_host"
+        from ".jac/client/compiled/main.js"
+```
+
+**Do not run the quick fix — the package does not exist.**
+`npm view @jac/wasm_host` returns `E404 Not Found`. It is not published on npm;
+it ships inside the jac runtime as `runtimelib/wasm_host.cl.jac`.
+
+The real cause is codespace inference. `main.jac` held a `cl { }` block *and* a
+plain `import from contracts { ... }`, and the client compiler decided
+`contracts` belonged in the client bundle as a **native/wasm** module:
+
+```js
+/* .jac/client/compiled/main.js */
+import { __na_bind as __jac_na_bind } from "@jac/wasm_host";
+const {LaneId, ..., ProspectView} = __jac_na_bind("contracts", [...]);
+```
+
+`contracts.jac` was 12 enums and 10 objs with **zero imports** — nothing marked
+it server-only, so nothing stopped it being pulled across.
+
+**The fix that works: pin the module by filename — `contracts.jac` →
+`contracts.sv.jac`.** A `.sv.jac` variant module keeps its module name, so every
+`import from contracts` in the project is unchanged; it is a pure rename.
+Measured, same tree otherwise:
+```
+before:  ⚠ Failed to build client bundle      GET / -> 503
+after:   ✔ Client bundle built (3.3s)         GET / -> 200, 4129 bytes
+         compiled main.js: no __na_bind, no @jac/wasm_host
+```
+
+Two fixes tried first that are **wrong**:
+
+- **`sv import from contracts { ... }`** — reads like server-pinning; it is not.
+  Per the `jac-codespaces` skill, `sv import` *from server code* declares a
+  **microservice boundary**. It auto-spawned `contracts` as its own service
+  process whose gateway tried to bind `0.0.0.0:8000` — the live demo port — and
+  died with `[Errno 48] address already in use`, tearing down only its own
+  service group. It does make the bundle build, for entirely the wrong reason.
+  **Never put `sv import` in a server module in this repo.**
+- **An `sv { }` block around the import** — the documented "region of a mixed
+  file" override. It parses and typechecks, and it does **not** stop the
+  `__na_bind`; the compiled entry was byte-identical on that line.
+
+Only the filename override worked. A minimal sandbox (a pure enums+objs module
+imported into a `cl`-bearing `main.jac`) does **not** reproduce it, so do not
+expect to bisect this quickly — go straight to `.sv.jac` for any pure enum/obj
+module that a client-bearing entry imports.
+
+
 ---
 
 ## 8. Environment
@@ -529,6 +623,55 @@ Probe edge same type?   False
 lane.probes() after one probe from each module: 2   <- both, incompatible
 ```
 If you need a node or edge, add it to `schema.jac` — never declare it locally.
+
+## 8d-ii. ⛔ Importing the SAME obj name from two modules SEGFAULTS the process
+
+8d is about archetypes. This is the `obj` analogue, and it is worse: not a
+silent mixture but a hard crash, at import time, with `jac check` green.
+
+Found while merging Becky's UI: `contracts.sv.jac` and her `traction/domain.jac`
+each declared an `obj ProspectView` and an `obj OutreachDraft`, with different
+fields. The natural thing — import each from the module that owns it — kills the
+interpreter:
+
+```jac
+import from a { ProspectView }   # obj ProspectView { has jid: str; }
+import from b { ProspectView }   # obj ProspectView { has id: str; }
+```
+```
+jac check m.jac   ->  m.jac ok [100%]      1 passed        <- green
+jac run   m.jac   ->  Segmentation fault at address 0x0
+                      aborting due to recursive panic
+```
+
+Measured, four variants and two controls, jac 0.34.7 / Darwin arm64:
+
+| case | `jac check` | `jac run` |
+|---|---|---|
+| import `ProspectView` from **a** only | PASS | ok — `from-contracts` |
+| import `ProspectView` from **b** only | PASS | ok — `from-views` |
+| import from **a then b** | PASS | **segfault** |
+| import from **b then a** | PASS | **segfault** |
+| two modules, **different** obj names | PASS | ok — both usable |
+| same name from both, **never constructed** | PASS | **segfault** |
+
+Two things in that table matter:
+
+- **Order is irrelevant** — it is not last-one-wins shadowing, it is a crash
+  either way.
+- **You do not have to USE the type.** The last row imports both names and
+  constructs neither, and still dies. The trigger is the duplicate NAME in one
+  module's import list, at load time. You cannot reach for it defensively and
+  "just not call it".
+
+**The rule: never let one module import two same-named objs.** Import the other
+symbols explicitly and let the ambiguous name come from exactly one place. This
+is why `main.jac` takes `ProspectView`/`OutreachDraft` from `contracts` (which
+`feed.jac` needs) and only `WorkspaceView` from `views.jac`, even though
+`views.jac` declares a `ProspectView` too — importing both would have
+segfaulted the server on boot, after a clean `jac check`.
+
+Repro kept minimal on purpose: three files, no graph, no server.
 
 ## 8e. ⛔ ONE PROCESS AT A TIME — the graph store is shared and unsynchronised
 
