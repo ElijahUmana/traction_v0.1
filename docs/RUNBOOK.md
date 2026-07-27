@@ -76,7 +76,7 @@ Run **`jac install`** — the scale deps are unresolved, so the WS routes never 
 
 `[scale.websocket]` in `jac.toml` is **not** required for this — A/B verified, routes register and return 101 with the block removed. It only tunes limits (the default 20 msg/sec would throttle the dashboard pump). An earlier claim of mine that it was required was wrong.
 
-`ops/restart.sh` fails loudly if the routes did not register.
+`ops/restart.sh` warns if the routes did not register, but no longer exits — the dashboard's documented fallback is to poll `feed_since`, so a server that is otherwise healthy is worth keeping.
 
 ### The tunnel URL "cannot be resolved" from this laptop
 
