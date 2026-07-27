@@ -1,9 +1,13 @@
 TRACTION - LANE D / EMAIL GATE / CROSS-LINK / RANKING : LIVE PROOF
-Captured 2026-07-26 17:35:11 PDT against the real GitHub REST API.
-Reproduce:  export GITHUB_TOKEN=$(gh auth token) && rm -rf .jac && jac run proof_laned.jac
+Captured 2026-07-26 17:51:57 PDT against the real GitHub REST API.
 
-Every address below was resolved from live data at runtime. Nothing is
-fixtured or fabricated. Every drop carries the reason it was dropped.
+RE-MEASURED AFTER e512d32. The earlier numbers in this file were produced
+while a truthy-method-ref bug short-circuited the waterfall for every
+prospect that already had an email, so the gate and the attribution floor
+never executed. Everything below ran with both active.
+
+Reproduce:  export GITHUB_TOKEN=$(gh auth token) && rm -rf .jac && jac run proof_laned.jac
+Every address was resolved from live data at runtime. Every drop carries a reason.
 
 ==============================================================================
 TRACTION - LANE D LIVE PROOF
@@ -11,33 +15,31 @@ TRACTION - LANE D LIVE PROOF
 
 --- LANE D: candidate generation ------------------------------------
   surfaced      : 14
-  api calls     : {'core_calls': 15, 'search_calls': 1, 'cache_hits': 0, 'errors': 0}
+  api calls     : {'core_calls': 14, 'search_calls': 1, 'cache_hits': 0, 'errors': 0}
 
   sidebar narration (analyst voice):
     [plan] Lane D running programmatically against the GitHub REST API - no browser. Looking for people shipping code against this problem right now, not people talking about it.
     [hit] 14 candidates from repositories pushed since 2026-07-01 matching 'ai agent framework'. Filtering above 400 stars on purpose - a maintainer with a community already has beta testers; someone shipping alone this week does not.
-    [rank] Lane D surfaced 14 candidates from GitHub, and rejected 1 accounts that matched the query but showed no sign of a person maintaining them. 1 search calls, 0 served from cache.
+    [rank] Lane D surfaced 14 candidates from GitHub, and rejected 0 accounts that matched the query but showed no sign of a person maintaining them. 1 search calls, 0 served from cache.
 
 --- THE HARD GATE: six-step waterfall -------------------------------
-  resolved: 11   dropped: 5
-  api     : {'core_calls': 84, 'search_calls': 13, 'cache_hits': 0, 'errors': 0}
+  resolved: 11   dropped: 3
+  api     : {'core_calls': 83, 'search_calls': 14, 'cache_hits': 0, 'errors': 0}
 
-  [DROP] nirholas                                                  waterfall exhausted - all six steps returned nothing
-  [KEEP] ezigus                 eric@zig.us                        published on their own GitHub profile; fuzzy login similarity 0.40
-  [KEEP] hughguan               hughguan@gmail.com                 taken from commits they authored themselves; local part is exactly the login
-  [KEEP] animeshkundu           anikedu@gmail.com                  published on their own GitHub profile; fuzzy login similarity 0.63
-  [KEEP] TaoELi                 t.e.li@outlook.com                 taken from commits they authored themselves; fuzzy login similarity 0.80
   [KEEP] Mubder                 b.alfaris@gmail.com                taken from commits they authored themselves; name token 'alfaris' appears in the profile name
-  [KEEP] SuperInstance          fleet@cocapn.ai                    taken from commits they authored themselves; fuzzy login similarity 0.22
-  [KEEP] magnus919              magnus919@pm.me                    taken from commits they authored themselves; local part is exactly the login
-  [DROP] djny45                                                    waterfall exhausted - all six steps returned nothing
-  [KEEP] MrPeppersDev           peppersthreathunts@gmail.com       taken from commits they authored themselves; fuzzy login similarity 0.53
-  [DROP] dana-okafor                                               no GitHub identity was cross-linked, so there is nothing to resolve an address from
-  [KEEP] nyxoraAI               yudhantoprasetyo@gmail.com         taken from commits they authored themselves; fuzzy login similarity 0.33
-  [DROP] csorodrigo                                                waterfall exhausted - all six steps returned nothing
+  [DROP] nirholas                                                  waterfall exhausted - all six steps returned nothing
   [KEEP] branben                brandonbennett@pursuit.org         taken from commits they authored themselves; local part is exactly the profile name
-  [DROP] sam-oyelaran                                              no GitHub identity was cross-linked, so there is nothing to resolve an address from
+  [KEEP] Oxjade                 jadecarnage86@gmail.com            taken from commits they authored themselves; local part contains the profile name
+  [KEEP] shuu5                  nepheluphito@gmail.com             taken from commits they authored themselves; fuzzy login similarity 0.25
+  [KEEP] SuperInstance          fleet@cocapn.ai                    taken from commits they authored themselves; fuzzy login similarity 0.22
+  [KEEP] hughguan               hughguan@gmail.com                 taken from commits they authored themselves; local part is exactly the login
+  [KEEP] ezigus                 eric@zig.us                        published on their own GitHub profile; fuzzy login similarity 0.40
+  [DROP] djny45                                                    waterfall exhausted - all six steps returned nothing
+  [DROP] csorodrigo                                                waterfall exhausted - all six steps returned nothing
+  [KEEP] icdev-ai               agi@icdev.ai                       taken from commits they authored themselves; fuzzy profile name similarity 0.25
   [KEEP] willregelmann          will@regelmann.net                 taken from commits they authored themselves; local part contains the login
+  [KEEP] MrPeppersDev           peppersthreathunts@gmail.com       taken from commits they authored themselves; fuzzy login similarity 0.53
+  [KEEP] jmatzkin1980           jose.matzkin@gmail.com             taken from commits they authored themselves; local part is exactly the profile name
 
 --- CROSS-LINK: LinkedIn -> GitHub (the HEAVY direction) ------------
   matched=True  login=simonw  tier=verified
@@ -47,36 +49,34 @@ TRACTION - LANE D LIVE PROOF
   matched=False  basis: github.com/torvalds appeared in a post they wrote but nothing corroborates it being Jane Unrelated (name similarity 0.29, no shared verified org)
 
 --- RANK AND SELECT -------------------------------------------------
-✖ Error: Error executing 'run': WriteConflict: anchor 00000000-0000-0000-0000-000000000000 changed concurrently (expected v103, found v108)
-Traceback (most recent call last):
-  File "/Users/runner/work/jac/jac/.zig-cache/o/519c5c3f4263ec4462e684f5a99f04b6/payload.tar.zst.work/site/jaclang/cli/impl/executor.impl.jac", line 14, in execute
-  File "/Users/runner/work/jac/jac/.zig-cache/o/519c5c3f4263ec4462e684f5a99f04b6/payload.tar.zst.work/site/jaclang/cli/impl/executor.impl.jac", line 49, in run_handler
-  File "/Users/runner/work/jac/jac/.zig-cache/o/519c5c3f4263ec4462e684f5a99f04b6/payload.tar.zst.work/site/jaclang/cli/commands/impl/execution.impl.jac", line 430, in run
-  File "/Users/runner/work/jac/jac/.zig-cache/o/519c5c3f4263ec4462e684f5a99f04b6/payload.tar.zst.work/site/jaclang/runtimelib/impl/context.impl.jac", line 72, in close
-  File "/Users/runner/work/jac/jac/.zig-cache/o/519c5c3f4263ec4462e684f5a99f04b6/payload.tar.zst.work/site/jaclang/scale/memory/impl/memory_hierarchy.main.impl.jac", line 223, in close
-  File "/Users/runner/work/jac/jac/.zig-cache/o/519c5c3f4263ec4462e684f5a99f04b6/payload.tar.zst.work/site/jaclang/scale/memory/impl/memory_hierarchy.main.impl.jac", line 149, in commit
-  File "/Users/runner/work/jac/jac/.zig-cache/o/519c5c3f4263ec4462e684f5a99f04b6/payload.tar.zst.work/site/jaclang/runtimelib/impl/memory.impl.jac", line 863, in apply
-  File "/Users/runner/work/jac/jac/.zig-cache/o/519c5c3f4263ec4462e684f5a99f04b6/payload.tar.zst.work/site/jaclang/runtimelib/impl/memory.impl.jac", line 911, in _apply_one
-  File "/Users/runner/work/jac/jac/.zig-cache/o/519c5c3f4263ec4462e684f5a99f04b6/payload.tar.zst.work/site/jaclang/runtimelib/impl/memory.impl.jac", line 978, in _merge_write
-jaclang.runtimelib.exceptions.WriteConflict: WriteConflict: anchor 00000000-0000-0000-0000-000000000000 changed concurrently (expected v103, found v108)
-✖ Error: WriteConflict: anchor 00000000-0000-0000-0000-000000000000 changed concurrently (expected v103, found v108)
-  selected 3  /  dropped 5
+  selected 3  /  dropped 3
 
+  A-tier  Brandon Bennett            brandonbennett@pursuit.org
+      score 0.657 pre-crosslink -> 0.657 (lanes: ['D'], x1.0)
+      email confidence 0.9
   A-tier  hughguan                   hughguan@gmail.com
       score 0.657 pre-crosslink -> 0.657 (lanes: ['D'], x1.0)
       email confidence 0.9
-  A-tier  Magnus Hedemark            magnus919@pm.me
-      score 0.657 pre-crosslink -> 0.657 (lanes: ['D'], x1.0)
-      email confidence 0.9
-  A-tier  Brandon Bennett            brandonbennett@pursuit.org
+  A-tier  Jose Matzkin               jose.matzkin@gmail.com
       score 0.657 pre-crosslink -> 0.657 (lanes: ['D'], x1.0)
       email confidence 0.9
 
   DROP LEDGER (shown on stage - visible elimination is the point):
     nirholas               waterfall exhausted - all six steps returned nothing
     djny45                 waterfall exhausted - all six steps returned nothing
-    dana-okafor            no GitHub identity was cross-linked, so there is nothing to resolve an address from
     csorodrigo             waterfall exhausted - all six steps returned nothing
-    sam-oyelaran           no GitHub identity was cross-linked, so there is nothing to resolve an address from
 
 ==============================================================================
+
+=== check_identity(): does the identity invariant FALSE-REFUSE Lane D? ===
+A false refusal empties the funnel at ComposeOutreach while the gate
+reports success upstream - as fatal as a false pass and much quieter.
+  [PASS] brandonbennett@pursuit.org
+  [PASS] b.alfaris@gmail.com
+  [PASS] will@regelmann.net
+  [PASS] jose.matzkin@gmail.com
+  [PASS] eric@zig.us
+  [PASS] agi@icdev.ai
+  Lane D prospects falsely refused: 0/6
+  cross-human case still refused: True
+    evidence was scraped from some-stranger but the prospect claims to be becky-real - this node holds more than one person
