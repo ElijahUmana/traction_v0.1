@@ -247,15 +247,30 @@ def midcall_tools -> list[dict] {
                     "required": ["spoken_time"]
                 }
             },
-            # There is deliberately NO static request-complete message here.
-            # Vapi speaks a static request-complete INSTEAD of the tool result,
-            # so a fixed string makes the agent claim "invite sent" no matter
-            # what actually happened - including when the tool 500s. That is
-            # exactly what was heard on call 019fa100. Leaving it out forces the
-            # model to narrate the returned line, which carries the real date,
-            # time and timezone the human needs in order to catch an error.
+            # Neither message may carry a FIXED sentence. Vapi speaks static
+            # content INSTEAD of the tool result, so a fixed string asserts
+            # "invite sent" no matter what happened - heard on call 019fa100.
+            #
+            # But omitting request-complete entirely is ALSO wrong: the model is
+            # then free to say nothing. On call 019fa12a the correct line came
+            # back at t=42.6s and the agent called endCall at t=44.4s without
+            # ever reading the time out, so Becky was never given the chance to
+            # catch a wrong slot. role=system passes this instruction to the
+            # model ALONGSIDE the real result: the booked time is always spoken,
+            # and it always comes from the tool rather than a canned string.
             "messages": [
                 {"type": "request-start", "content": "Let me get that booked."},
+                {
+                    "type": "request-complete",
+                    "role": "system",
+                    "content": (
+                        "The booking succeeded. Read the confirmation back to them "
+                        + "word for word - the day, the date, the time and the "
+                        + "timezone exactly as the tool returned them - so they can "
+                        + "correct you if it is wrong. Do not end the call until you "
+                        + "have said the time out loud and they have responded."
+                    )
+                },
                 {
                     "type": "request-failed",
                     "role": "system",

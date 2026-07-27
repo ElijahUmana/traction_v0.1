@@ -124,12 +124,22 @@ def tools() -> list[dict]:
                     "required": ["spoken_time"],
                 },
             },
-            # No static request-complete: Vapi speaks it INSTEAD of the tool
-            # result, so the agent would assert an invite was sent regardless of
-            # what actually happened. This harness must reproduce the real
-            # assistant exactly, or it certifies a path nobody ships.
+            # Mirrors voice.midcall_tools exactly. No FIXED content on either
+            # message (Vapi speaks it INSTEAD of the tool result), but BOTH are
+            # present with role=system so the model always narrates the real
+            # returned line. A harness that differs certifies a path nobody ships.
             "messages": [
                 {"type": "request-start", "content": "Let me get that booked."},
+                {
+                    "type": "request-complete",
+                    "role": "system",
+                    "content": (
+                        "The booking succeeded. Read the confirmation back word for "
+                        "word - day, date, time and timezone exactly as the tool "
+                        "returned them - so they can correct you if it is wrong. Do "
+                        "not end the call until you have said the time out loud."
+                    ),
+                },
                 {
                     "type": "request-failed",
                     "role": "system",

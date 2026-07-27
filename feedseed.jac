@@ -21,6 +21,7 @@ the feed; they are not evidence that the research lanes found anyone.
 import time;
 
 import from contracts { LaneId, LaneState, RunStatus, ReasoningKind, CompletenessTier }
+import from svc { cfg }
 import from schema {
     Founder, ResearchRun, Lane, Reasoning, Prospect,
     Runs, HasLane, Emitted, Surfaced
