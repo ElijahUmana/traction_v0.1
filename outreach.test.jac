@@ -109,3 +109,28 @@ test "a short stored quote must appear in full" {
     assert quote_is_grounded(normalize("They ships on Fridays reportedly"), short);
     assert not quote_is_grounded(normalize("They ship on Tuesdays"), short);
 }
+
+
+test "a correctly quoted citation is not defeated by its own quotation marks" {
+    # The exact failure that blocked the critical path: the model quotes the
+    # sentence properly, the quote marks fuse onto the boundary tokens, and a
+    # nine-word run measures as seven. Punctuation must be stripped from BOTH
+    # sides before tokenising or good quoting is punished.
+    stored = "Hi, this is Xingzhi (Becky) Zhu, UCLA alum double majoring in Business Economics and Statistics. My fields of interest are analytics and product management.";
+    body = 'In your LinkedIn About section you wrote: "My fields of interest are analytics and product management." That intersection is where discovery breaks down.';
+    assert longest_verbatim_run(normalize(body), normalize(stored)) >= 8;
+    assert not rejected(body, stored, "");
+}
+
+test "typographic quotes and em dashes do not break a run" {
+    stored = "My fields of interest are analytics and product management";
+    body = "you wrote \u201cMy fields of interest are analytics and product management\u201d \u2014 and that matters";
+    assert not rejected(body, stored, "");
+}
+
+test "stripping punctuation does not let a paraphrase through" {
+    # The widened normalisation must not become a way to pass without quoting.
+    stored = "Every time I add a new tool to my agent the retry logic drifts and I end up debugging timeouts";
+    body = "You mentioned that adding tools causes your retry behaviour to wander, and debugging eats your time.";
+    assert rejected(body, stored, "");
+}
