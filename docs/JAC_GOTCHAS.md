@@ -132,10 +132,47 @@ fails loudly on a misspelling.
 
 So the pattern trades a *loud* failure that only strikes when imports reorder
 for a *silent* one that strikes if you mistype. That is still the right trade in
-an endpoint that must keep answering while modules land around it — but only if
-you take the values **verbatim from the enum definition** rather than retyping
-them from memory. Copy them out of `contracts.sv.jac`; do not trust your recall
-of whether it is `"linkedin"` or `"LinkedIn"`.
+an endpoint that must keep answering while modules land around it — but only
+with the two mitigations below, because the risk is worse than "watch your
+spelling".
+
+**Risk 1 — the casing convention is NOT uniform across `contracts.sv.jac`, so a
+correct memory of one enum produces a wrong literal for the next.** Verified
+against the file:
+
+```
+LaneId.A            = "A"          ← UPPERCASE
+CompletenessTier.S  = "S"          ← UPPERCASE
+CompletenessTier.DROPPED = "DROPPED"
+EvidenceSource.LINKEDIN  = "linkedin"    ← lowercase
+EvidenceKind.COMMENT     = "comment"     ← lowercase
+IdentityTier.VERIFIED    = "verified"    ← lowercase
+```
+Ten of the twelve enums are lowercase words; the two exceptions are the ones
+using short codes (`LaneId` A/B/C/D/W, `CompletenessTier` S/A/DROPPED). So a
+projection helper comparing `ev.source == "linkedin"` and `p.tier == "S"` three
+lines apart is correct in **two different conventions at once** — and
+neighbouring uppercase code is exactly what makes `p.tier == "s"` feel right
+while typing it. That branch is then silently always-false and drops every
+S-tier prospect off the dashboard, with a clean `jac check`.
+
+**Risk 2 — literals lose the type distinction the enum member carried.**
+`LaneId.A` and `CompletenessTier.A` are **both** `"A"`. As enum members they are
+different types and a mix-up is a check error; as literals, `p.tier == "A"` and
+`lane.lane_id == "A"` are both valid and mean entirely different things. The
+compiler stops helping precisely where two enums share a value.
+
+**Mitigation: copy each value out of the declaration at the moment you write the
+comparison.** Not from memory, not from a message, not from this file — the
+values above are documentation and could themselves drift. Open
+`contracts.sv.jac` and copy.
+
+> The inconsistent casing is a wart in `contracts.sv.jac` and it is mine. **Do
+> not "fix" it by normalising the values** — these strings are persisted in the
+> graph (the committed `anchor_store.CLEANCHAIN.db` holds `"linkedin"` and
+> `"S"`), so changing them silently invalidates every stored node and every
+> snapshot restore. If it is ever worth harmonising, that is a migration, not an
+> edit.
 
 Leave a comment at the site too, or someone will "tidy" it back to the enum
 member. (Credit to BRIDGE for spotting the typo risk — the original version of
