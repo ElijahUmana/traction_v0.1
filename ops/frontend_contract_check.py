@@ -774,18 +774,34 @@ def check_walkers(c: Client) -> None:
     status, _ = c.raw_post("/walker/LiveFeed", {})
     check("POST /walker/LiveFeed is 405 - proof the WebSocket decorator registered",
           status == 405,
-          f"HTTP {status}. Doc §7 failure mode: without [scale.websocket] in "
-          "jac.toml (or without `jac install`), @restspec(protocol=WEBSOCKET) is "
-          "SILENTLY ignored and LiveFeed is served as a plain HTTP endpoint. A "
-          "200 here means exactly that, and ws:// will 404.",
+          f"HTTP {status}. Doc §7 failure mode: without the scale WebSocket "
+          "subsystem resolved, @restspec(protocol=WEBSOCKET) is SILENTLY ignored "
+          "and LiveFeed is served as a plain HTTP endpoint. A 200 here means "
+          "exactly that, and ws:// will 404.",
           "405 Method Not Allowed = it is a WebSocket route, not an HTTP one")
 
-    check("DOC GAP: §8's endpoint index omits both walkers", False,
-          "The frontend cannot start a run from the doc alone. Neither "
-          "/walker/PlanCampaign nor /walker/RunResearch appears in §8, and the "
-          "doc never mentions that walkers return their payload in "
-          "data.reports[0] rather than data.result - the opposite of every "
-          "function endpoint in §1. Covered in docs/FRONTEND_QUICKSTART.md.")
+    # The doc must actually tell the frontend how to start a run.
+    import os
+    doc = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                       "docs", "FRONTEND_INTEGRATION.md")
+    try:
+        with open(doc, encoding="utf-8") as fh:
+            text = fh.read()
+    except OSError as e:
+        check("docs/FRONTEND_INTEGRATION.md is readable", False, str(e))
+        return
+    missing = [w for w in ("/walker/PlanCampaign", "/walker/RunResearch")
+               if w not in text]
+    check("the contract documents how to START a run", not missing,
+          f"{missing} appear nowhere in docs/FRONTEND_INTEGRATION.md. The "
+          "frontend cannot kick off a run from the doc alone.",
+          "both walkers are in the endpoint index")
+    check("the contract warns that walkers return data.reports[0], not data.result",
+          "data.reports[0]" in text,
+          "the doc never says walkers unwrap differently from functions - a "
+          "frontend that reads data.result off a walker gets the walker's own "
+          "`has` fields and silently no payload",
+          "the reports[0] vs result distinction is called out")
 
 
 async def check_websocket(base: str) -> None:
