@@ -1,0 +1,40 @@
+
+========================================================================
+TRANSCRIPT (t = seconds from call start)
+========================================================================
+[  1.37] bot              Hi, Becky. This is an AI assistant. Calling on behalf of Elijah Umana. You replied to our email a moment ago. Is now still a good time?
+[ 10.12] user             Yes.
+[ 12.34] bot              Becky, I noticed your
+[ 26.93] user             It's not working. There's a four minute.
+[ 28.58] tool_calls       CALL answer_from_graph({"question": "how does this help me"})
+[ 28.82] user             What did you say?
+[ 29.70] tool_call_result RESULT No result returned. If this is unexpected, see troubleshooting tips at https://docs.vapi.ai/tools/custom-tools-troubleshooting#no-result-returned-error
+[ 29.83] bot              Hold on a sec.
+[ 30.75] user             It's because it's not working.
+[ 35.56] bot              Becky, I'm call
+[ 35.61] user             Because
+[ 39.03] bot              Becky, I'm calling because your background in business economics and data science at UCLA matches what Elijah Umana is building to help with analytics and produ
+
+========================================================================
+MEASUREMENTS
+========================================================================
+ended reason        : customer-ended-call
+duration            : 0.12 USD
+time to first word  : 1.37s  (from call creation - INCLUDES RINGING, not a latency figure)
+first real answer   : 1.90s after she finished -> 'Becky, I noticed your'
+turn latency        : n=4  min 0.05s  median 3.02s  max 3.45s
+     1.90s  after human said: 'Yes.'
+     0.05s  after human said: 'What did you say?'
+     3.45s  after human said: "It's because it's not working."  <-- SLOW
+     3.02s  after human said: 'Because'  <-- SLOW
+barge-in overlaps   : 1
+    human cut in at 35.61s, 0.75s before agent would have finished: "Becky, I'm call"
+tool calls          : ['answer_from_graph']
+    result: No result returned. If this is unexpected, see troubleshooting tips at https://docs.vapi.ai/tools/custom-tools-troubleshooting#no-result-returned-error
+
+========================================================================
+VERDICT
+========================================================================
+  FAIL  median turn latency 3.02s (target <= 2.0s)
+  PASS  the agent invoked 1 tool(s): ['answer_from_graph']
+  INFO  1 barge-in(s) captured
