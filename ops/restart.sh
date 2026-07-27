@@ -120,7 +120,15 @@ server_pids() {
 }
 
 # The pid actually bound to our port, whatever flags it was started with.
-port_pids() { lsof -ti tcp:"$PORT" 2>/dev/null || true; }
+# -sTCP:LISTEN is NOT optional. Plain `lsof -ti tcp:$PORT` returns every socket
+# on that port, INCLUDING established client connections - a browser tab with
+# the dashboard open, a curl, the Vapi tunnel. This value is fed straight to
+# `kill` and `kill -9`, so without the filter a restart SIGKILLs the user's
+# browser. Measured on :8000: plain lsof returned {Chrome 12202, jac 73320};
+# LISTEN-scoped returned {jac 73320}. It would also have written Chrome's pid
+# into the lockfile, so the NEXT restart would kill the browser and leave the
+# server running.
+port_pids() { lsof -ti tcp:"$PORT" -sTCP:LISTEN 2>/dev/null || true; }
 
 # server_pids() deliberately includes the `sh -c "tail -f /dev/null | jac ..."`
 # wrapper, because stopping the server means stopping that too. But `tail -f`
@@ -167,13 +175,14 @@ fi
 # and whatever is on our port, however it got there
 # shellcheck disable=SC2046
 kill $(server_pids) $(port_pids) 2>/dev/null || true
-lsof -ti tcp:"$PORT" 2>/dev/null | xargs -r kill 2>/dev/null || true
+# shellcheck disable=SC2046
+kill $(port_pids) 2>/dev/null || true
 
 for _ in $(seq 1 30); do
-  lsof -ti tcp:"$PORT" >/dev/null 2>&1 || break
+  [ -n "$(port_pids)" ] || break
   sleep 0.5
 done
-if lsof -ti tcp:"$PORT" >/dev/null 2>&1; then
+if [ -n "$(port_pids)" ]; then
   echo "    still bound after SIGTERM - sending SIGKILL"
   # shellcheck disable=SC2046
   kill -9 $(server_pids) $(port_pids) 2>/dev/null || true

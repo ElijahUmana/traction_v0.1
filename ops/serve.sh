@@ -96,7 +96,10 @@ if [ "$ACTION" = "stop" ]; then
     cwd="$(lsof -a -p "$pid" -d cwd -Fn 2>/dev/null | sed -n 's/^n//p' | head -1)"
     [ "$cwd" = "$(cd "$DIR" 2>/dev/null && pwd -P)" ] && kill "$pid" 2>/dev/null || true
   done
-  lsof -ti tcp:"$PORT" 2>/dev/null | xargs -r kill 2>/dev/null || true
+  # -sTCP:LISTEN or this kills every CLIENT of the port too - the browser tab
+  # with the dashboard open, a curl, the Vapi tunnel. Verified on :8000: plain
+  # lsof returned Chrome alongside the server.
+  lsof -ti tcp:"$PORT" -sTCP:LISTEN 2>/dev/null | xargs -r kill 2>/dev/null || true
   rm -f "$LOCK"
   echo "stopped instance on :$PORT ($DIR)"
   exit 0
