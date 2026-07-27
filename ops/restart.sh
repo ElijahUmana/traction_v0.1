@@ -50,33 +50,89 @@ cd "$(dirname "$0")/.."
 PORT="${PORT:-8000}"
 LOG="${LOG:-/tmp/traction-server.log}"
 DATA=".jac/data"
+# Lives above .jac/data so it survives a `rm -rf .jac/data`.
+LOCK=".jac/serving.lock"
 # macOS always ships /usr/bin/sqlite3; prefer it over whatever conda put first
 # on PATH so the preflight behaves the same on every machine.
 SQLITE="$( [ -x /usr/bin/sqlite3 ] && echo /usr/bin/sqlite3 || command -v sqlite3 || true )"
 
 # -----------------------------------------------------------------------------
-# stop
+# who is holding this data dir?
 # -----------------------------------------------------------------------------
-# Deliberately NOT port-scoped. A stale server on another port still holds this
-# same .jac/data, and that is the thing that corrupts it (see docs/RUNBOOK.md:
-# one process at a time - the graph store is shared and unsynchronised).
-echo "==> stopping any running server"
-pkill -f "jac start" 2>/dev/null || true
+# The real hazard is not "another server on my port", it is ANY second process
+# with .jac/data open - `jac run`, `jac test`, a stray server on another port.
+# N processes against one SQLite anchor store is what corrupts the guest root in
+# the first place (docs/JAC_GOTCHAS.md 8e), and OUTREACH measured the trigger:
+# 12 sequential writes are fine, 20 concurrent corrupt it.
+#
+# So ask the filesystem who has the store open rather than guessing from process
+# names. This catches `jac run` and `jac test`, which a pkill on "jac start"
+# never would.
+data_dir_holders() {
+  local exclude="${1:-}" f pids=""
+  for f in "$DATA/anchor_store.db" "$DATA/users.db" "$DATA/main.db"; do
+    [ -f "$f" ] || continue
+    pids="$pids $(lsof -t -- "$f" 2>/dev/null || true)"
+  done
+  # shellcheck disable=SC2086
+  printf '%s\n' $pids | sort -u | grep -v '^$' | grep -vx "$exclude" || true
+}
+
+describe_pids() {
+  local pid
+  for pid in $@; do
+    echo "       pid $pid: $(ps -o command= -p "$pid" 2>/dev/null | cut -c1-100)"
+  done
+}
+
+# -----------------------------------------------------------------------------
+# stop - ONLY what belongs to this directory
+# -----------------------------------------------------------------------------
+# Scoped deliberately. A global `pkill -f "jac start"` kills every teammate's
+# isolated server too, and we did exactly that to FRONTEND's instance on 8099.
+# Authority over our own data dir, none over anyone else's.
+echo "==> stopping this directory's server"
+
+# whatever we recorded last time, whatever port it was on
+if [ -f "$LOCK" ]; then
+  LOCK_PID="$(sed -n 's/^pid=//p' "$LOCK" | head -1)"
+  if [ -n "${LOCK_PID:-}" ] && kill -0 "$LOCK_PID" 2>/dev/null; then
+    echo "    stopping recorded server pid $LOCK_PID"
+    kill "$LOCK_PID" 2>/dev/null || true
+  fi
+fi
+# and whatever is on our port, however it got there
+pkill -f "jac start main.jac --no-client -p $PORT" 2>/dev/null || true
+lsof -ti tcp:"$PORT" 2>/dev/null | xargs -r kill 2>/dev/null || true
 
 for _ in $(seq 1 30); do
-  if ! pgrep -f "jac start" >/dev/null 2>&1 && ! lsof -ti tcp:"$PORT" >/dev/null 2>&1; then
-    break
-  fi
+  lsof -ti tcp:"$PORT" >/dev/null 2>&1 || break
   sleep 0.5
 done
-
-if pgrep -f "jac start" >/dev/null 2>&1 || lsof -ti tcp:"$PORT" >/dev/null 2>&1; then
-  echo "    still alive after SIGTERM - sending SIGKILL"
-  pkill -9 -f "jac start" 2>/dev/null || true
+if lsof -ti tcp:"$PORT" >/dev/null 2>&1; then
+  echo "    still bound after SIGTERM - sending SIGKILL"
+  pkill -9 -f "jac start main.jac --no-client -p $PORT" 2>/dev/null || true
   lsof -ti tcp:"$PORT" 2>/dev/null | xargs -r kill -9 2>/dev/null || true
   sleep 2
 fi
+rm -f "$LOCK"
 echo "    port $PORT is free"
+
+# -----------------------------------------------------------------------------
+# the guard: refuse to start a second process against a data dir in use
+# -----------------------------------------------------------------------------
+# This is the one that makes the corruption structurally impossible rather than
+# a rule someone has to remember at 19:00.
+HOLDERS="$(data_dir_holders "$$" | tr '\n' ' ')"
+if [ -n "${HOLDERS// /}" ]; then
+  echo "!! REFUSING TO START. Another process still has $DATA open:"
+  # shellcheck disable=SC2086
+  describe_pids $HOLDERS
+  echo "    Two processes on one SQLite anchor store is what corrupts the guest"
+  echo "    root and produces the permanent _lock 500s. Stop them, or serve this"
+  echo "    checkout from its own directory with: ops/serve.sh"
+  exit 1
+fi
 
 if [ "${1:-}" = "--clean" ]; then
   echo "==> wiping cache + graph (safe now: nothing is holding it)"

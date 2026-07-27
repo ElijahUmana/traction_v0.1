@@ -15,6 +15,7 @@ import from svc { google_headers, http_json, founder_email, cfg }
 
 
 glob CAL_EVENTS_URL: str = "https://www.googleapis.com/calendar/v3/calendars/primary/events";
+glob FREEBUSY_URL: str = "https://www.googleapis.com/calendar/v3/freeBusy";
 
 
 def demo_timezone -> str {
@@ -110,8 +111,26 @@ async def create_meeting(
     start: datetime = now_local() + timedelta(minutes=fallback_minutes);
     if parsed is not None {
         start = ensure_tz(parsed);
+    } elif start_iso.strip() {
+        # A non-empty start that will not parse is NEVER a reason to book
+        # "soon". The old code fell through to now+fallback here and the agent
+        # went on to say "invite sent" - the human heard success and got a slot
+        # nobody asked for. Callers must resolve the time before calling
+        # (timeparse.resolve_spoken_time); an unresolvable one has to fail loud.
+        raise ValueError(
+            f"gcal.create_meeting: start_time '{start_iso}' is not ISO-8601 and was "
+            + "not resolved upstream. Refusing to silently book "
+            + f"{fallback_minutes} minutes from now instead of the time that was asked for."
+        );
     }
     end: datetime = start + timedelta(minutes=minutes);
+
+    if start <= now_local() {
+        raise ValueError(
+            f"gcal.create_meeting: start_time '{start.isoformat()}' is in the past. "
+            + "Refusing to book backwards."
+        );
+    }
 
     guests: list[dict] = [];
     seen: list[str] = [];
@@ -180,3 +199,38 @@ async def delete_meeting(event_id: str) -> bool {
     _ = await http_json("DELETE", url, headers, None, 20.0, "gcal-delete-event");
     return True;
 }
+
+
+"""Ask Google whether the founder is already busy across a window.
+
+Returns (is_free, conflicts). A conflict is described in words the voice agent
+can read out, so "you already have something then, does 3 work?" is a real
+sentence rather than a raw timestamp. Never raises on a lookup failure - an
+availability check that goes down must not block a booking the human asked
+for, so it fails OPEN and says so in the reason.
+"""
+async def check_availability(start: datetime, minutes: int) -> tuple[bool, list[str]] {
+    finish = start + timedelta(minutes=minutes);
+    body = {
+        "timeMin": start.isoformat(),
+        "timeMax": finish.isoformat(),
+        "timeZone": demo_timezone(),
+        "items": [{"id": "primary"}]
+    };
+    headers = await google_headers();
+    data = await http_json(
+        "POST", FREEBUSY_URL, headers, body, 15.0, "gcal-freebusy"
+    );
+    calendars: dict = data.get("calendars", {}) as dict;
+    primary: dict = calendars.get("primary", {}) as dict;
+    busy: list = primary.get("busy", []) as list;
+    conflicts: list[str] = [];
+    for raw in busy {
+        slot: dict = raw as dict;
+        conflicts.append(
+            f"{slot.get('start', '?')} to {slot.get('end', '?')}"
+        );
+    }
+    return (len(conflicts) == 0, conflicts);
+}
+

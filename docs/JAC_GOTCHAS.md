@@ -327,6 +327,62 @@ the graph rather than that a local variable still holds what you just put in it.
 - Creating a node mid-traversal and `visit`ing it works — the widening ladder
   depends on this.
 
+### ⛔ 6.1 `flow` inside a list comprehension RACES on the loop variable
+
+The single worst bug found in this project. It produces wrong results with no
+error, and it passes tests most of the time.
+
+```jac
+futures = [flow run_lane(s.node, s.lane_id, ...) for s in specs];   # RACY
+```
+
+The worker thread can read the comprehension's loop variable **after the loop
+has advanced**, so every thread ends up running the **last** item. Measured in
+the research orchestrator: all three `LaneResult`s came back `"C"`, lane C's
+node carried 3× the narration while lanes A and B sat at zero. On stage that is
+three identical browser panels instead of three researchers.
+
+It is a **race**, not a syntax rule — the same code was correct on a cold first
+run and wrong on a warmer second run *in the same process*. Repro:
+
+```
+[flow show(s.name) for s in specs]  -> ['A','B','C']   usually — wins the race
+[flow show(s)      for s in specs]  -> ['C','C','C']   always
+[flow show(c[0])   for c in calls]  -> ['C','C','C']   always
+```
+
+Bare loop variables and subscripts lose every time. **Attribute reads win often
+enough to look correct**, which is why this survives casual testing.
+
+**The fix — launch through a function, and cross the boundary with values only:**
+
+```jac
+def launch_lane(lane_jid: str, lane_id: str, phrases_json: str) -> any {
+    return flow run_lane(lane_jid, lane_id, phrases_json);   # own param binding
+}
+futures = [launch_lane(s.lane_jid, s.lane_id, s.phrases_json) for s in specs];
+```
+
+- The **node crosses as its `jid`**, re-resolved with `jobj()` in the worker.
+  Verified `jobj(jid(n)) is n` → **True** — same node, not a copy, and thread
+  writes are visible through the original reference.
+- **Lists cross as JSON**, decoded per-thread — which also guarantees no two
+  workers share one mutable list.
+
+This is forced as well as chosen: **E1308 rejects objs, bare nodes and bare
+lists across a `flow` boundary**, so strings are the only option that both
+type-checks and binds eagerly.
+
+**Audit rule:** if your loop variable appears anywhere inside a `flow` call, you
+have this bug — it may just be winning the race today.
+
+### 6.2 Reverse-edge reads race against sibling threads
+
+`[probe <-:Probe:<-]` to rediscover a parent works fine single-threaded and
+fails intermittently under `flow` (`"SearchProbe is not attached to any Lane"`).
+If a walker needs the node it was spawned on, **capture it at entry**
+(`self.lane_node = here`) rather than walking edges backwards later.
+
 ---
 
 ## 7. Server / endpoints
