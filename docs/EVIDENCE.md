@@ -375,15 +375,24 @@ Use `tail -f /dev/null | jac start …`, which is portable and actually blocks. 
 
 ## 8. Test suite
 
-**Status: GREEN — 20/20, with no API key set.**
+**Status: MY SUITE IS GREEN (20/20, no API key). THE FULL-REPO RUN IS RED at collection.** Both facts matter; neither is omitted.
 
 ```
-$ ops/test.sh
+$ PYTEST_XDIST_AUTO_NUM_WORKERS=1 jac test feed.jac
 1 worker [20 items]
 ....................                                    [100%]
 20 passed
-PASS - and it passed with no ANTHROPIC_API_KEY set.
 ```
+
+```
+$ ops/test.sh              # whole repo
+====================== no tests ran in 170.05s ======================
+FAIL (exit 3)
+```
+
+`jac test feed.jac` collects and passes 20 tests. `jac test` across the repo collects **nothing** and exits 3, so some other test file is breaking collection for everyone. Test files present: `browser/ws.test.jac`, `emailgate.test.jac`, `feed.test.jac`, `identity.test.jac`, `outreach.test.jac`, `research.test.jac`, `schema.test.jac`. Not bisected — each full run costs 3–5 minutes and I ran out of runway.
+
+**This is a rubric-relevant gap.** "We have a test suite" is only defensible if `jac test` runs. Bisecting it by running each file individually is the fix.
 
 `feed.test.jac` covers the two-hop `Founder → Runs → ResearchRun` read, lane ordering and `live_url` presence, convergence dedup to one row while recording both lanes, DROPPED prospects staying on the ledger, score sort order, run-state survivor/drop/converged counts, global time ordering of reasoning across lanes, and `feed_since` cursor semantics.
 
@@ -422,6 +431,7 @@ Stated plainly, because the evidence standard here is absolute.
 - **The joined-up live E2E chain** — real lanes → real prospect → real email → real reply → real Vapi call → real Calendar booking — **has not been run end to end.** Segments have strong individual proofs (§1, §2, §3); the joined-up artifact does not exist. `PlanCampaign` was missing as of this writing and `RunResearch` raises without an ICP, so the Go button was routed but not runnable.
 - **The mobile-hotspot tunnel test** (§6) has not been run, and the register calls the hotspot primary.
 - **No fix exists for the persistent guest-root corruption** (§7) beyond wiping the graph. The snapshot mitigation is proposed, not yet exercised.
+- **`jac test` across the whole repo does not run** (§8). Only `jac test feed.jac` is verified green.
 - **No browser client has rendered these endpoints.** The frontend contract is verified at the wire level only.
 - **Lane D's ~40%** (§2) is my adversarial read of the artifact, not an independently re-run deliverability check. No address was SMTP-verified.
 
