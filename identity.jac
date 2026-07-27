@@ -276,6 +276,14 @@ walker ResolveEmail {
     has ledger: list[dict[str, any]] = [];
     has reports: list[dict[str, any]] = [];
 
+    # Per-run scoping, for the same reason as RankAndSelect: re-resolving every
+    # prospect in the graph on every run wastes the 30/min search budget on
+    # people who were already gated, and a second run must not re-litigate the
+    # first run's decisions.
+    can start_run with ResearchRun entry {
+        visit [here ->:HasLane:-> ->:Surfaced:->];
+    }
+
     can start with Root entry {
         targets: list[Prospect] = [
             root --> [?:Founder] ->:Runs:-> ->:HasLane:-> ->:Surfaced:->
@@ -386,8 +394,16 @@ walker ResolveEmail {
         });
     }
 
+    can finish_run with ResearchRun exit {
+        report self._summary();
+    }
+
     can finish with Root exit {
-        report {
+        report self._summary();
+    }
+
+    def _summary -> dict[str, any] {
+        return {
             "resolved": self.resolved,
             "dropped": self.dropped,
             "ledger": self.ledger,
@@ -724,10 +740,23 @@ walker RankAndSelect {
     has drops: list[dict[str, any]] = [];
     has reports: list[dict[str, any]] = [];
 
+    # Scoping matters for correctness, not just for tests. Ranking is a
+    # per-RUN operation: a founder who runs research twice must not have the
+    # second run's tiers overwrite the first's. Spawning on a ResearchRun ranks
+    # exactly that run's prospects; spawning on root ranks everything reachable,
+    # which is what the demo does because it has a single run.
+    can rank_run with ResearchRun entry {
+        self._rank([here ->:HasLane:-> ->:Surfaced:->]);
+    }
+
     can rank with Root entry {
         pool: list[Prospect] = [
             root --> [?:Founder] ->:Runs:-> ->:HasLane:-> ->:Surfaced:->
         ];
+        self._rank(pool);
+    }
+
+    def _rank(pool: list[Prospect]) {
         survivors: list[Prospect] = [];
 
         for p in pool {
@@ -797,6 +826,10 @@ walker RankAndSelect {
         self.selected = self.selected[0:self.top_n];
     }
 
+    can finish_run with ResearchRun exit {
+        report self._summary();
+    }
+
     """Weighted completeness. Every term is something a judge can point at on
     screen: an address we can actually mail, corroborating artifacts, and the
     strength of the identity link behind them."""
@@ -826,7 +859,11 @@ walker RankAndSelect {
     }
 
     can finish with Root exit {
-        report {
+        report self._summary();
+    }
+
+    def _summary -> dict[str, any] {
+        return {
             "selected": self.selected,
             "dropped": self.drops,
             "n_selected": len(self.selected),

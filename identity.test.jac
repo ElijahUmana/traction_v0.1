@@ -39,7 +39,7 @@ test "convergence from two lanes raises the score and is recorded" {
         p +>:HasEvidence(lane=LaneId.D, confidence=0.8):+> ev;
     }
 
-    res = root spawn RankAndSelect(top_n=10);
+    res = run spawn RankAndSelect(top_n=10);
     rep = res.reports[0];
     picked: list[dict[str, any]] = rep["selected"] as list[dict[str, any]];
 
@@ -87,7 +87,7 @@ test "the email gate drops a content-rich prospect with no address" {
         rich +>:HasEvidence(lane=LaneId.B, confidence=0.95):+> ev;
     }
 
-    res = root spawn RankAndSelect(top_n=10);
+    res = run spawn RankAndSelect(top_n=10);
     rep = res.reports[0];
     dropped: list[dict[str, any]] = rep["dropped"] as list[dict[str, any]];
     handles: list[str] = [];
@@ -123,7 +123,7 @@ test "tiering distinguishes S from A by cross-link completeness" {
     a_gp: GithubProfile = GithubProfile(login="atier", url="u");
     a_tier +>:Identity(tier=IdentityTier.VERIFIED, basis="t", confidence=0.9):+> a_gp;
 
-    _ = root spawn RankAndSelect(top_n=10);
+    _ = run spawn RankAndSelect(top_n=10);
     assert s_tier.tier == CompletenessTier.S, "email + GitHub + LinkedIn is S";
     assert a_tier.tier == CompletenessTier.A, "email + one side only is A";
     assert s_tier.score > a_tier.score, "S must outrank A on identical evidence";
@@ -151,7 +151,7 @@ test "three-lane convergence beats two-lane convergence" {
         p +>:Identity(tier=IdentityTier.VERIFIED, basis="t", confidence=0.9):+> gp;
     }
 
-    _ = root spawn RankAndSelect(top_n=10);
+    _ = run spawn RankAndSelect(top_n=10);
     assert len(three.convergence_lanes()) == 3;
     assert len(two.convergence_lanes()) == 2;
     assert three.score > two.score, "more independent lanes must mean a higher score";
