@@ -19,14 +19,17 @@ lanes in research.jac.
 
 import time;
 import from contracts {
+    RunStatus,
     LaneId, LaneState, ReasoningKind, EvidenceKind, EvidenceSource,
     EmailSource, CompletenessTier, IdentityTier
 }
 import from schema {
+    ResearchRun, Runs, HasLane,
     Lane, Prospect, Evidence, Founder, Reasoning, LinkedinProfile,
     Surfaced, HasWarmLead, HasEvidence, Emitted, HasLane, Runs, Identity
 }
 import from browser.session { new_session }
+import from browser.env { env }
 
 # Lane W talks to browser.session directly rather than borrowing research.jac's
 # LaneBrowser. Not a style choice: research.jac must import LaneW so RunResearch
@@ -607,5 +610,106 @@ walker LaneW {
         }
         self.browser.close_session();
         report p;
+    }
+}
+
+
+# ===========================================================================
+# HTTP entry point.
+#
+# LaneW itself only matches `with Lane entry`, which is correct -- it needs a
+# Lane node to write onto. But POST /walker/<name> spawns on ROOT, so LaneW has
+# no usable HTTP route, and the demo needs one: the warm lead has to exist in
+# the graph the SERVER is serving, not in whatever local root a `jac run`
+# happened to touch. Those are two different graphs.
+#
+# Deliberately narrow. RunResearch fans out five lanes and takes 5-15 minutes;
+# this does the one lane the call and the email depend on, and nothing else.
+# ===========================================================================
+
+"""Research the warm lead into the live graph. Idempotent enough to re-run."""
+walker:pub ResearchWarmLead {
+    has warm_url: str = "";
+    has warm_name: str = "";
+    has preferred_name: str = "";
+    has warm_email: str = "";
+    has context_id: str = "";
+    has founder_name: str = "Elijah Umana";
+
+    can start with Root entry {
+        url = self.warm_url if self.warm_url else env("TEAMMATE_LINKEDIN_URL", "");
+        name = self.warm_name if self.warm_name else env("TEAMMATE_NAME", "");
+        pref = self.preferred_name if self.preferred_name else env("TEAMMATE_PREFERRED_NAME", "");
+        mail = self.warm_email if self.warm_email else env("TEAMMATE_EMAIL", "");
+        ctx = self.context_id if self.context_id else env("BROWSERBASE_LINKEDIN_CONTEXT_ID", "");
+
+        if not url {
+            report {
+                "ok": False,
+                "error": "no warm-lead URL: pass warm_url or set TEAMMATE_LINKEDIN_URL"
+            };
+            disengage;
+        }
+
+        # Reuse whatever is already on this root rather than building a second
+        # Founder beside the existing one -- a duplicate would split the graph
+        # the dashboard reads from.
+        founders = [-->[?:Founder]];
+        founder = founders[0] if founders else (
+            root ++> Founder(name=self.founder_name, email=env("FOUNDER_EMAIL", ""))
+        );
+
+        runs = [founder ->:Runs:->];
+        run = runs[-1] if runs else (
+            founder +>:Runs(created_at=time.time()):+> ResearchRun(
+                started_at=time.time(), status=RunStatus.RUNNING
+            )
+        );
+
+        # The warm lead is attached at intake and Lane W RESOLVES that node
+        # rather than creating one, so seed it here if this root has never had
+        # an intake. Never a second Prospect for the same human.
+        existing = [founder ->:HasWarmLead:->];
+        if not existing {
+            founder +>:HasWarmLead(note="named at intake"):+> Prospect(
+                name=name, handle="", preferred_name=pref
+            );
+        }
+
+        lane = Lane(lane_id=LaneId.W);
+        run +>:HasLane(launched_at=time.time()):+> lane;
+
+        w = LaneW(
+            context_id=ctx, warm_url=url, warm_name=name,
+            preferred_name=pref, warm_email=mail
+        );
+        w spawn lane;
+
+        people = [founder ->:HasWarmLead:->];
+        if not people {
+            report {"ok": False, "error": "lane W wrote no prospect",
+                    "lane_state": str(lane.state), "failure": w.failure};
+            disengage;
+        }
+        p = people[0];
+        quotes: list = [];
+        for ev in [p ->:HasEvidence:->] {
+            quotes.append({"kind": str(ev.kind), "quote": ev.quote[:300], "url": ev.url});
+        }
+        report {
+            "ok": w.evidence_written > 0,
+            "prospect_jid": jid(p),
+            "name": p.name,
+            "preferred_name": p.preferred_name,
+            "email": p.email,
+            "headline": p.headline,
+            "company": p.company,
+            "linkedin_url": p.linkedin_url,
+            "lane_state": str(lane.state),
+            "live_url": lane.live_url,
+            "evidence_count": w.evidence_written,
+            "evidence": quotes,
+            "failure": w.failure
+        };
     }
 }
