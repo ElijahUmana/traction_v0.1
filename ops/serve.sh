@@ -88,7 +88,7 @@ if [ "$ACTION" = "stop" ]; then
     LP="$(sed -n 's/^pid=//p' "$LOCK" | head -1)"
     [ -n "${LP:-}" ] && kill "$LP" 2>/dev/null || true
   fi
-  pkill -f "jac start main.jac --no-client -p $PORT" 2>/dev/null || true
+  pkill -f "jac start main.jac -p $PORT" 2>/dev/null || true
   lsof -ti tcp:"$PORT" 2>/dev/null | xargs -r kill 2>/dev/null || true
   rm -f "$LOCK"
   echo "stopped instance on :$PORT ($DIR)"

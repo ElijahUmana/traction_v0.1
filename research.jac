@@ -582,7 +582,12 @@ walker LinkedInLane {
     # Wall-clock budget. A lane that overruns disengages CLEANLY and reports
     # what it has: `wait` on a hung lane blocks all four and freezes the
     # dashboard, which is an unrecoverable failure on a 4-minute stage.
-    has deadline_s: float = 150.0;
+    #
+    # 90s, not longer, and the reason is presentational rather than technical:
+    # a lane that stops at 90s having narrated a clean handover reads as
+    # deliberate, while one still grinding at minute three reads as broken even
+    # though it is working correctly.
+    has deadline_s: float = 90.0;
     has started_at: float = 0.0;
     has timed_out: bool = False;
 
@@ -1477,7 +1482,9 @@ walker:pub RunResearch {
     has fixture: dict = {};
     # Per-lane wall-clock budget. The orchestrator must never be able to hang:
     # every lane disengages cleanly at this bound and reports partials.
-    has lane_deadline_s: float = 150.0;
+    # Default lives here rather than at the call site - the call site is the
+    # thing most likely to be typed wrong under pressure.
+    has lane_deadline_s: float = 90.0;
     has include_github: bool = True;
     has run: any = None;
     has lane_results: list[LaneResult] = [];

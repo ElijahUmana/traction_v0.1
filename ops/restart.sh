@@ -119,7 +119,7 @@ if [ -f "$LOCK" ]; then
   fi
 fi
 # and whatever is on our port, however it got there
-pkill -f "jac start main.jac --no-client -p $PORT" 2>/dev/null || true
+pkill -f "jac start main.jac -p $PORT" 2>/dev/null || true
 lsof -ti tcp:"$PORT" 2>/dev/null | xargs -r kill 2>/dev/null || true
 
 for _ in $(seq 1 30); do
@@ -128,7 +128,7 @@ for _ in $(seq 1 30); do
 done
 if lsof -ti tcp:"$PORT" >/dev/null 2>&1; then
   echo "    still bound after SIGTERM - sending SIGKILL"
-  pkill -9 -f "jac start main.jac --no-client -p $PORT" 2>/dev/null || true
+  pkill -9 -f "jac start main.jac -p $PORT" 2>/dev/null || true
   lsof -ti tcp:"$PORT" 2>/dev/null | xargs -r kill -9 2>/dev/null || true
   sleep 2
 fi
@@ -250,7 +250,7 @@ start_server() {
   # unset. It is nothing to do with why _lock is MISSING (that is unconditional,
   # see the header) - it is about what makes the store DIVERGE in the first
   # place. Unsetting it costs nothing here; the app never uses Redis.
-  nohup sh -c "unset REDIS_URL; tail -f /dev/null | jac start main.jac --no-client -p $PORT" \
+  nohup sh -c "unset REDIS_URL; tail -f /dev/null | jac start main.jac -p $PORT" \
     > "$LOG" 2>&1 &
 
   # READINESS IS A REAL ENDPOINT, NEVER /healthz.
@@ -285,7 +285,7 @@ start_server() {
     # Do not sit out the full 300s waiting for a process that is already gone.
     # A `jac start` that dies at launch leaves an EMPTY log and a silent wait,
     # which reads exactly like a slow compile - that cost real time to diagnose.
-    if ! pgrep -f "jac start main.jac --no-client -p $PORT" >/dev/null 2>&1; then
+    if ! pgrep -f "jac start main.jac -p $PORT" >/dev/null 2>&1; then
       echo "    !! the jac process is gone - it died at launch, it is not compiling"
       echo "       (log is $LOG, $(wc -c < "$LOG" 2>/dev/null || echo 0) bytes)"
       tail -15 "$LOG" 2>/dev/null | sed 's/^/       /'
@@ -350,7 +350,7 @@ fi
 
 # Record who owns this data dir, so the next restart stops exactly this process
 # and no one else's. Above .jac/data so a `rm -rf .jac/data` cannot orphan it.
-SERVER_PID="$(pgrep -f "jac start main.jac --no-client -p $PORT" | head -1)"
+SERVER_PID="$(pgrep -f "jac start main.jac -p $PORT" | head -1)"
 mkdir -p "$(dirname "$LOCK")"
 { echo "pid=${SERVER_PID:-unknown}"; echo "port=$PORT"; echo "dir=$PWD"; } > "$LOCK"
 echo "==> holding $LOCK (pid ${SERVER_PID:-unknown}, port $PORT)"
@@ -401,7 +401,7 @@ else
   if grep -q "no attribute '_lock'" "$LOG"; then
     echo "    -> _lock AttributeError in the log: divergent guest root got through"
     echo "       the preflight. Repairing and restarting ONCE."
-    pkill -9 -f "jac start main.jac --no-client -p $PORT" 2>/dev/null || true
+    pkill -9 -f "jac start main.jac -p $PORT" 2>/dev/null || true
     lsof -ti tcp:"$PORT" 2>/dev/null | xargs -r kill -9 2>/dev/null || true
     # WAIT for it to actually be gone. `sleep 3` and hope is what let a repair
     # race a still-live server; repair_guest_root now refuses in that case, but
@@ -417,7 +417,7 @@ else
     if ! start_server; then
       echo "!! server never became healthy after repair - see $LOG"; tail -30 "$LOG"; exit 1
     fi
-    SERVER_PID="$(pgrep -f "jac start main.jac --no-client -p $PORT" | head -1)"
+    SERVER_PID="$(pgrep -f "jac start main.jac -p $PORT" | head -1)"
     { echo "pid=${SERVER_PID:-unknown}"; echo "port=$PORT"; echo "dir=$PWD"; } > "$LOCK"
     if smoke; then
       echo "    12/12 OK after repair"

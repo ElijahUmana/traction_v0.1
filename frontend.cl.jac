@@ -1,6 +1,6 @@
 """Traction stateful client shell and editorial workflow UI."""
 
-sv import from traction.domain {
+sv import from views {
     WorkspaceView,
     ProductUnderstanding,
     PersonaView,
@@ -8,7 +8,7 @@ sv import from traction.domain {
     ActivityView,
     InsightView
 }
-sv import from traction.workflows {
+sv import from bridge {
     bootstrap_workspace,
     begin_product,
     confirm_understanding,

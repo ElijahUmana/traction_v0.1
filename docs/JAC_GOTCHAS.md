@@ -536,6 +536,37 @@ Every `jac run` and `jac start` in a project directory reads and writes the SAME
 `.jac/data` anchor store. Several people (or agents) working in one checkout
 will silently stomp each other's graph.
 
+### 8e-0. `ps` CANNOT tell you which data dir a process holds — check its CWD
+
+`anchor_store.db` resolves **relative to the process's working directory**, so
+two processes with byte-identical command lines can be on completely different
+stores. A `ps` line is therefore worthless for diagnosing store contention:
+
+```
+51903  jac start main.jac --no-client -p 8877     <- looks like the repo
+73494  jac start main.jac --no-client -p 8000     <- looks like the repo
+
+$ lsof -a -p 51903 -d cwd   ->  /private/tmp/traction-demo        # ISOLATED
+$ lsof -a -p 73494 -d cwd   ->  /Users/elijahumana/jachacks-...   # the repo
+```
+
+Only the second is on the repo's store. **Two people independently read that
+same `ps` output as "two servers fighting over one store" within a minute of
+each other, and both were wrong** — one was a correctly-isolated instance.
+
+Use these, in this order:
+```bash
+lsof -a -p <pid> -d cwd                      # which directory this pid is in
+lsof <repo>/.jac/data/anchor_store.db        # who ACTUALLY holds the store
+pgrep -f 'jac (run|test)'                    # then check each one's cwd
+```
+A process that merely *looks* like it is in the repo is not evidence. The file
+handle is.
+
+Corollary for background work: a command that times out and is backgrounded
+**keeps running**, holding the store long after the shell that started it has
+moved on. Check by CWD before concluding you are clean.
+
 Observed, back-to-back in one shell with nothing in between:
 ```
 rm -rf .jac
