@@ -1,0 +1,375 @@
+THE CHAIN, OVER HTTP — captured by ops/chain.sh
+================================================================================
+Captured by DEMOPATH against an ISOLATED instance (port 8902, data dir
+/tmp/demopath-data), not the demo server on :8000. Anonymous POSTs throughout —
+no Authorization header is sent anywhere in the script.
+
+WHY THIS ARTIFACT EXISTS
+Every segment of TRACTION had a strong individual proof, and all of them were
+`jac run` proofs. `jac run` writes the LOCAL root; the server reads the GUEST
+root. So a walker can be green under `jac run` and dead over HTTP. This run is
+the first time the whole chain has been driven over HTTP with the GRAPH read
+back at every boundary. It found two defects that every prior proof missed.
+
+HOW TO READ IT
+Every stage prints a census read out of the server with `graph_health`, plus a
+MOVED / (no change) line. A stage that reports success without moving a count is
+a FAILED stage here, whatever it returned. Walker return values are never
+treated as proof.
+
+WHAT THIS RUN PROVES
+  - `walker:pub` genuinely opens anonymous access. Negative control below.
+  - The Vapi mid-call tool envelope is defeated: `/vapi/kb` and `/vapi/book`
+    return exactly {"results":[{"toolCallId":"...","result":"<string>"}]}.
+  - `RunResearch`'s `from_root` Root entry fires over HTTP against the guest root.
+
+WHAT THIS RUN DISPROVES  ** READ THIS BEFORE TRUSTING ANY GREEN CHECK **
+  - `POST /walker/RunResearch {}` -> HTTP 422. `has run: any = None` emits no
+    default into the OpenAPI schema, so the field is marked REQUIRED.
+  - `POST /walker/RunResearch {"run": null}` -> HTTP 500 in 0.087s, graph
+    unmoved. `resolve_lane` (research.jac:1342) calls `jobj(lane_jid)` inside a
+    `flow` worker thread; the thread does not inherit the request's guest-root
+    binding, so the Lane created microseconds earlier does not resolve.
+    THE DASHBOARD'S GO BUTTON DOES NOT WORK OVER HTTP. Unfixed at capture time.
+
+STARTING GRAPH STATE
+This was the third chain run against this instance, so the graph already carried
+founders=1 runs=2 lanes=10 from earlier runs' intake seeding. That is why the
+census starts non-zero. It does not affect any conclusion: every conclusion here
+rests on the DELTA at each boundary, and RunResearch's delta is (no change).
+
+INSTANCE CAVEAT — STATED SO NOBODY IS MISLED
+`main.jac` imports thirteen names from `bridge`, and `bridge.jac` did not exist
+when this instance was booted (`No module named 'bridge'`, main.jac:84). To get
+a server at all, DEMOPATH placed a LOCAL-ONLY stub `bridge.jac` in the isolated
+copy whose every function RAISES. It is not committed. Nothing in this chain
+calls the bridge — the script drives walkers directly over HTTP — so the stub
+does not touch any result below.
+
+================================================================================
+--------------------------------------------------------------------------------
+### 0. PREFLIGHT — is this a real server, and is it anonymous?
+--------------------------------------------------------------------------------
+    host                : http://127.0.0.1:8902
+    graph_health        : HTTP 200   (/healthz is NOT used here - it returns 200 through a total outage)
+    walker endpoints    : 23 registered
+    anonymous POST      : no Authorization header is sent anywhere in this script
+  GRAPH [start]
+      founders: 1
+      runs: 2
+      lanes: 10
+      probes: 0
+      reasoning: 0
+      prospects: 0
+      converged_prospects: 0
+      dropped_prospects: 0
+--------------------------------------------------------------------------------
+### 1. INTAKE — a Founder on the graph
+--------------------------------------------------------------------------------
+    intake source       : ResearchWarmLead returned HTTP 405 - not registered on this build.
+                          main.jac has no 'import from lane_w', so the route does not exist.
+    !! FALLING BACK to SeedRehearsalProspect. THIS IS REHEARSAL SCAFFOLDING, NOT INTAKE.
+       The Founder it builds is real (name/one-liner from .env); the prospect it
+       attaches is seeded, and every downstream count is therefore attributable to
+       the seed rather than to research UNTIL RunResearch runs in stage 3.
+       CHAIN_SEED_QUOTE is unset. The seeder refuses to create an evidence-free
+       prospect (by design - it would let ComposeOutreach appear to work while
+       producing a generic email). Seeding the FOUNDER ONLY via SeedRehearsalRun.
+{"ok":true,"run":"e7821f2491ad463c934c2568262005dc","lanes":["ddb499db108148a3b0513caac42e71e9","119666b8792e4e35a45d6bad80a30824","f817d7e80aad459b8069fadd18eec9c3","e67d9482fa9745c180ee3c7ecfafd8e4","ece164f6531a4a6ab4aabb7304cae3c8"]}
+
+  GRAPH [after intake]
+      founders: 1
+      runs: 3
+      lanes: 15
+      probes: 0
+      reasoning: 0
+      prospects: 0
+      converged_prospects: 0
+      dropped_prospects: 0
+      MOVED: runs 2->3  lanes 10->15
+--------------------------------------------------------------------------------
+### 2. PLAN — Founder -> ICP
+--------------------------------------------------------------------------------
+{"ok":true,"source":"existing","hypothesis":"A founder or indie developer who just built a product but left the one-liner and product summary fields blank because they have nothing concrete to describe yet, suggesting they need to articulate what they built before any ICP research can be meaningful.","keywords":["what do i call my product","how to describe what i built","writing a product one liner","explaining my startup to users","product positioning for founders","how to write a value proposition","describing my app simply","elevator pitch for technical founders"],"negative_keywords":["hiring","recruiting","course","learn to code","agency services","marketing agency","template for sale"],"pain_phrases":["i built something but i have no idea how to explain it to people","every time i describe my product it sounds different","my one liner changes every conversation and i hate it","i can
+  GRAPH [after PlanCampaign]
+      founders: 1
+      runs: 3
+      lanes: 15
+      probes: 0
+      reasoning: 0
+      prospects: 0
+      converged_prospects: 0
+      dropped_prospects: 0
+      (no change)
+--------------------------------------------------------------------------------
+### 3. RESEARCH — the Go button, four lanes plus the warm lead
+--------------------------------------------------------------------------------
+    sending {"run": null} - a bare {} is HTTP 422 on this build, see comment above
+    HTTP status         : 500
+    wall clock          : 0s
+    !! SERVER ERROR in RunResearch
+    !! jid f35111a3c1e44efeb0b4e240d4e8f542 does not resolve to a Lane
+    !! This stage did NOT run. Any count that moved was moved by an earlier stage.
+    reports             :
+
+    !! UNDER 2 SECONDS. A real fan-out cannot finish that fast. Treat as a no-op
+       until the census below proves otherwise.
+  GRAPH [after RunResearch]
+      founders: 1
+      runs: 3
+      lanes: 15
+      probes: 0
+      reasoning: 0
+      prospects: 0
+      converged_prospects: 0
+      dropped_prospects: 0
+      (no change)
+    lanes as the dashboard sees them:
+      lane A  state=searching  prospects=0  comment mining under mid-tier practitioner posts
+      lane B  state=searching  prospects=0  post authorship - first-person problem statements
+      lane C  state=searching  prospects=0  synonym sweep - defeats vocabulary lock-in
+      lane D  state=searching  prospects=0  GitHub-first, programmatic
+      lane W  state=searching  prospects=0  warm lead - deep research on one known person
+--------------------------------------------------------------------------------
+### 4. CROSS-LINK — one human across two networks
+--------------------------------------------------------------------------------
+[]
+
+[]
+
+  GRAPH [after cross-link]
+      founders: 1
+      runs: 3
+      lanes: 15
+      probes: 0
+      reasoning: 0
+      prospects: 0
+      converged_prospects: 0
+      dropped_prospects: 0
+      (no change)
+--------------------------------------------------------------------------------
+### 5. IDENTITY — the email waterfall and its refusal gate
+--------------------------------------------------------------------------------
+{"resolved":0,"dropped":0,"ledger":[],"api":{"core_calls":0,"search_calls":0,"cache_hits":0,"errors":0},"api_errors":[]}
+
+  GRAPH [after ResolveEmail]
+      founders: 1
+      runs: 3
+      lanes: 15
+      probes: 0
+      reasoning: 0
+      prospects: 0
+      converged_prospects: 0
+      dropped_prospects: 0
+      (no change)
+--------------------------------------------------------------------------------
+### 6. RANK — S/A tiering, convergence multiplier, drop ledger
+--------------------------------------------------------------------------------
+{"selected":[],"dropped":[],"n_selected":0,"n_dropped":0}
+
+  GRAPH [after RankAndSelect]
+      founders: 1
+      runs: 3
+      lanes: 15
+      probes: 0
+      reasoning: 0
+      prospects: 0
+      converged_prospects: 0
+      dropped_prospects: 0
+      (no change)
+    prospects as the dashboard sees them:
+    chain target        : <none>  id=<none>
+--------------------------------------------------------------------------------
+### 7. COMPOSE — a cited email, or a refusal
+--------------------------------------------------------------------------------
+    !! no prospect with an email on the graph. The chain stops being able to act here.
+       That is a real outcome, not a script bug: lanes A and C surface zero today
+       (LinkedIn rotated their class names) and Lane W is skipped when
+       TEAMMATE_LINKEDIN_URL is unset.
+  GRAPH [after ComposeOutreach]
+      founders: 1
+      runs: 3
+      lanes: 15
+      probes: 0
+      reasoning: 0
+      prospects: 0
+      converged_prospects: 0
+      dropped_prospects: 0
+      (no change)
+--------------------------------------------------------------------------------
+### 8. SEND — GATED (a real email to a real human)
+--------------------------------------------------------------------------------
+    NOT RUN. This link ends at a real stranger's inbox and is off by default.
+    COVERED BY SEGMENT PROOF: evidence/lane_w_to_email.txt - live LinkedIn ->
+      Lane W -> ComposeOutreach with refused:False, addressed_as the name she
+      actually goes by, a verbatim citation from her real About section, and
+      EmailThread count 0 -> 1. Re-run this script with --send to close it live.
+--------------------------------------------------------------------------------
+### 9. CALL — GATED (a real phone rings)
+--------------------------------------------------------------------------------
+  GRAPH [after ScheduleCall]
+      founders: 1
+      runs: 3
+      lanes: 15
+      probes: 0
+      reasoning: 0
+      prospects: 0
+      converged_prospects: 0
+      dropped_prospects: 0
+      (no change)
+--------------------------------------------------------------------------------
+### 10. MID-CALL — the tool endpoint Vapi actually calls
+--------------------------------------------------------------------------------
+    RAW response body (153 bytes), byte for byte:
+      {"results": [{"toolCallId": "chain_probe_001", "result": "No research is on file for this call, so nothing specific can be claimed about this person."}]}
+    PASS  top-level keys are exactly ["results"] - no ok/data/type/meta wrapper
+    PASS  result is a STRING, matching the OpenAPI type: string
+    toolCallId echoed: chain_probe_001
+    !! this is the FALLBACK string. KbQuery resolves a dossier from a CallSession
+       (cache -> graph -> sole-session), and no CallSession exists without a real
+       call. So the WIRE FORMAT is proven here and the GRAPH-BACKED ANSWER is not.
+    COVERED BY SEGMENT PROOF: evidence/voice_call_019fa115_analysis.txt - the
+       dossier lookup resolving in 0.013ms with resolved_by: cache on a live call.
+       Together: 019fa115 proves the lookup, this proves the wire format it
+       needed. Run with --call to join them in one pass.
+--------------------------------------------------------------------------------
+### 11. BOOK — GATED (a real event on a real calendar)
+--------------------------------------------------------------------------------
+    NOT RUN. Writes a real Google Calendar event and emails an invite to a real
+    person. COVERED BY SEGMENT PROOF: evidence/live_booking_proof / proof_outreach
+      - a real Meet link created and both parties invited.
+    The wire format of its Vapi adapter IS proven live - /vapi/book returns
+      {"results":[{"toolCallId":"...","result":"<string>"}]} on the failure
+      path too, so the agent speaks the reason instead of claiming success.
+  GRAPH [after booking stage]
+      founders: 1
+      runs: 3
+      lanes: 15
+      probes: 0
+      reasoning: 0
+      prospects: 0
+      converged_prospects: 0
+      dropped_prospects: 0
+      (no change)
+--------------------------------------------------------------------------------
+### 12. SYNTHESIZE — call -> Insight nodes
+--------------------------------------------------------------------------------
+{}
+
+  GRAPH [after OnCallEnd]
+      founders: 1
+      runs: 3
+      lanes: 15
+      probes: 0
+      reasoning: 0
+      prospects: 0
+      converged_prospects: 0
+      dropped_prospects: 0
+      (no change)
+--------------------------------------------------------------------------------
+### CHAIN COMPLETE
+--------------------------------------------------------------------------------
+    Everything above was driven over HTTP against http://127.0.0.1:8902 and every claim is
+    backed by a census read back out of the server, not by a walker's return value.
+    
+    GATES NOT CLOSED IN THIS RUN (each names the segment proof that covers it):
+      - SendOutreach   : real email to a real human      -> evidence/lane_w_to_email.txt
+      - ScheduleCall   : a real phone rings              -> evidence/voice_call_019fa115_analysis.txt
+      - BookInterview  : a real calendar event           -> evidence/live_booking_proof
+    
+    Close them all in one pass with:  ops/chain.sh --send --call --book
+
+================================================================================
+SUPPORTING PROBES — run separately, same instance, same session
+================================================================================
+
+--- 1. `walker:pub` really does open anonymous access (NEGATIVE CONTROL) -------
+A 200 on a :pub walker proves nothing unless a non-pub walker is refused. It is.
+
+  anonymous POST, no Authorization header:
+    walker:pub   ResolveEmail         HTTP 200
+    walker:pub   CrossLinkToGithub    HTTP 200
+    walker:pub   CrossLinkToLinkedIn  HTTP 200
+    walker:pub   RankAndSelect        HTTP 200
+    walker:pub   GithubLane           HTTP 200
+    plain walker LaneA                HTTP 401   <- control
+    plain walker LaneB                HTTP 401   <- control
+    plain walker LaneC                HTTP 401   <- control
+    plain walker LinkedInLane         HTTP 401   <- control
+
+  and the server's own /openapi.json agrees:
+    /walker/LaneA         security=[{"BearerAuth":[]}]
+    /walker/ResolveEmail  security ABSENT
+  Anonymity is genuinely gated on this server, and `:pub` is what opens it.
+
+--- 2. required-field sweep across all 23 walker endpoints --------------------
+Read out of /openapi.json. Exactly the `has <name>: any = None` fields are
+marked required; every other field carries its declared default.
+
+    /walker/RunResearch    required=[run]
+    /walker/LaneA          required=[tactics,lane_node,browser]
+    /walker/LaneB          required=[tactics,lane_node,browser]
+    /walker/LaneC          required=[tactics,lane_node,browser]
+    /walker/LinkedInLane   required=[tactics,lane_node,browser]
+    (all 18 other walkers: required=[])
+
+  matching exactly: research.jac:594,599,601 and research.jac:1489.
+  The 422 body:
+    {"detail":[{"type":"missing","loc":["body","run"],"msg":"Field required","input":{}}]}
+
+--- 3. the `from_root` Root entry DOES fire over HTTP --------------------------
+On an empty graph, POST /walker/RunResearch {"run": null} -> HTTP 200, 0.29s:
+
+  reports: [{"ok":false,"error":"no Founder on the graph - run PlanCampaign (or intake) first"}]
+
+  A non-empty reports array from the Root entry, against the guest root. That is
+  the ability firing — not the old silent `200 []` no-op. JACCDP's fix is real;
+  it is defect 2 and defect 3 above that stop it being reachable.
+
+--- 4. the Vapi tool envelope, through a PUBLIC cloudflare tunnel --------------
+A second cloudflared was started for :8902. The demo tunnel on :8000 (pid 38319)
+was NOT touched and was confirmed alive afterwards.
+
+  POST https://<tunnel>/vapi/kb
+    HTTP/2 200, server: cloudflare, content-type: application/json, len 161
+    {"results": [{"toolCallId": "call_demopath_probe_001", "result": "No research is on file for this call, so nothing specific can be claimed about this person."}]}
+
+    top-level keys are exactly ["results"]   — no ok/data/type/meta wrapper
+    result is a STRING                       — matches OpenAPI `type: string`
+    toolCallId echoed back correctly
+    body is BYTE-IDENTICAL to the same request against 127.0.0.1 (cmp clean),
+      so Cloudflare is not reshaping it
+
+  POST https://<tunnel>/vapi/book  (failure path — the important one)
+    {"results": [{"toolCallId": "call_demopath_book_001", "result": "The booking did not go through: BookInterview: could not resolve who to book. call_id='...' prospect_id=''"}]}
+    Valid envelope and a STRING result on the error path, so the agent speaks
+    the reason instead of claiming success.
+
+  THE HONEST LIMIT: both answers above are the FALLBACK string, because the
+  graph carried no CallSession. KbQuery resolves a dossier cache -> graph ->
+  sole-session, and no CallSession exists without a real call. So this proves
+  the WIRE FORMAT and does not prove the graph-backed answer. Call 019fa115
+  (evidence/voice_call_019fa115_analysis.txt) proves the other half: the dossier
+  lookup resolving in 0.013ms with resolved_by: cache, on a live call, which
+  Vapi then could not read because of the envelope this run shows is now gone.
+  Together they cover the link. `ops/chain.sh --call` joins them in one pass.
+
+================================================================================
+GAPS THIS ARTIFACT DOES NOT CLOSE — stated plainly
+================================================================================
+  - SendOutreach  : ends at a real stranger's inbox. Not run.
+                    Segment proof: evidence/lane_w_to_email.txt
+  - ScheduleCall  : rings a real phone. Not run.
+                    Segment proof: evidence/voice_call_019fa115_analysis.txt
+  - BookInterview : writes a real calendar event and invites a real person.
+                    Not run. Segment proof: evidence/live_booking_proof
+  - The research fan-out itself never executed in this run, because of the
+    HTTP 500 above. Lanes A/B/C/D/W surfaced nothing here — that is the 500,
+    NOT the known "lanes A and C yield zero" LinkedIn class-name issue. No
+    prospect was surfaced, so stages 4-7 (cross-link, identity, rank, compose)
+    had nothing to act on and are UNEXERCISED in this run, not passing.
+  - There is no HTTP intake. Nothing creates a Founder over HTTP except the
+    rehearsal seeders; `PlanCampaign`'s error names an `IntakeFounder` walker
+    that does not exist anywhere in the repo. `ResearchWarmLead` (lane_w.jac:631,
+    walker:pub) is the only real-Founder creator and main.jac does not import
+    lane_w, so it has no route (HTTP 405).

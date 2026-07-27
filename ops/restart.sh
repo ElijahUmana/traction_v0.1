@@ -175,8 +175,8 @@ for _ in $(seq 1 30); do
 done
 if lsof -ti tcp:"$PORT" >/dev/null 2>&1; then
   echo "    still bound after SIGTERM - sending SIGKILL"
-  pkill -9 -f "jac start main.jac -p $PORT" 2>/dev/null || true
-  lsof -ti tcp:"$PORT" 2>/dev/null | xargs -r kill -9 2>/dev/null || true
+  # shellcheck disable=SC2046
+  kill -9 $(server_pids) $(port_pids) 2>/dev/null || true
   sleep 2
 fi
 rm -f "$LOCK"
@@ -458,8 +458,8 @@ else
   if grep -q "no attribute '_lock'" "$LOG"; then
     echo "    -> _lock AttributeError in the log: divergent guest root got through"
     echo "       the preflight. Repairing and restarting ONCE."
-    pkill -9 -f "jac start main.jac -p $PORT" 2>/dev/null || true
-    lsof -ti tcp:"$PORT" 2>/dev/null | xargs -r kill -9 2>/dev/null || true
+    # shellcheck disable=SC2046
+    kill -9 $(server_pids) $(port_pids) 2>/dev/null || true
     # WAIT for it to actually be gone. `sleep 3` and hope is what let a repair
     # race a still-live server; repair_guest_root now refuses in that case, but
     # do not rely on the last line of defence for something we can just check.

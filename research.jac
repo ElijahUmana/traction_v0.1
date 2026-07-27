@@ -1339,18 +1339,8 @@ obj LaneSpec {
 }
 
 
-def resolve_lane(lane_jid: str) -> Lane {
-    """Turn a lane's jid back into its node inside the worker thread.""";
-    n = jobj(lane_jid);
-    if not isinstance(n, Lane) {
-        raise ValueError(f"jid {lane_jid} does not resolve to a Lane");
-    }
-    return n;
-}
-
-
 def run_lane(
-    lane_jid: str, lane_id: str, context_id: str, hypothesis: str,
+    lane_node: Lane, lane_id: str, context_id: str, hypothesis: str,
     phrases_json: str, offline: bool, fixture_json: str, deadline_s: float
 ) -> LaneResult {
     """One lane, start to finish, inside its own thread.
@@ -1362,7 +1352,6 @@ def run_lane(
     container is not sendable across a concurrency boundary (E1308), and
     decoding per-thread guarantees no lane can mutate another lane's copy.
     """;
-    lane_node = resolve_lane(lane_jid);
     fixture: dict = json.loads(fixture_json) if fixture_json else {};
     phrases: list[str] = json.loads(phrases_json) if phrases_json else [];
     w: LinkedInLane = LaneC(
@@ -1408,7 +1397,7 @@ def run_lane(
 
 
 def launch_lane(
-    lane_jid: str, lane_id: str, phrases_json: str,
+    lane_node: Lane, lane_id: str, phrases_json: str,
     ctx: str, hyp: str, off: bool, fx: str, deadline_s: float
 ) -> any {
     """Start one lane and hand back its future.
@@ -1423,7 +1412,7 @@ def launch_lane(
     no shared variable left for a thread to re-read.
     """;
     return flow run_lane(
-        lane_jid, lane_id, ctx, hyp, phrases_json, off, fx, deadline_s
+        lane_node, lane_id, ctx, hyp, phrases_json, off, fx, deadline_s
     );
 }
 
@@ -1458,11 +1447,11 @@ def launch_lane_w(
 
 
 def launch_github(
-    lane_jid: str, keywords_json: str, pains_json: str, negatives_json: str
+    lane_node: Lane, keywords_json: str, pains_json: str, negatives_json: str
 ) -> any {
     """Same eager-binding rule as launch_lane - see the note there.""";
     return flow run_github_lane(
-        lane_jid, keywords_json, pains_json, negatives_json
+        lane_node, keywords_json, pains_json, negatives_json
     );
 }
 
@@ -1566,13 +1555,56 @@ impl RunResearch.start with Founder entry {
     # Attribute reads happen here, at the call site, BEFORE the thread starts -
     # that is what removes the race. Lists cross as JSON (E1308: a container is
     # not sendable across a concurrency boundary) and are decoded per-thread.
-    futures = [
-        launch_lane(
-            s.lane_jid, s.lane_id, s.phrases_json,
-            ctx, hypothesis, offline, fixture_json, deadline
-        )
-        for s in specs
-    ];
+    # ONE DISTINCTLY-NAMED VARIABLE PER LANE. This shape is load-bearing and
+    # was arrived at by fixing the same bug from two opposite directions:
+    #
+    #   `[flow run_lane(s.node, ...) for s in specs]`  -> RACES. The worker can
+    #   read the loop variable after the loop advanced, so all three lanes ran
+    #   the LAST spec: three identical panels, no error.
+    #
+    #   passing `jid(node)` and calling `jobj()` in the worker -> fixed the race
+    #   but 500s over HTTP. In a server request the walker is bound to the GUEST
+    #   root and the `flow` thread does not inherit that binding, so `jobj()`
+    #   cannot see a Lane created microseconds earlier. It resolved fine under
+    #   `jac run` only because the local root is ambient in that process.
+    #
+    # Separate names solve both: nothing is shared to race on, and the real node
+    # crosses so no root lookup is needed. Three lanes is fixed by the demo.
+    futures = [];
+    if len(specs) > 0 {
+        sa = specs[0];
+        futures.append(
+            launch_lane(
+                sa.node, sa.lane_id, sa.phrases_json,
+                ctx, hypothesis, offline, fixture_json, deadline
+            )
+        );
+    }
+    if len(specs) > 1 {
+        sb = specs[1];
+        futures.append(
+            launch_lane(
+                sb.node, sb.lane_id, sb.phrases_json,
+                ctx, hypothesis, offline, fixture_json, deadline
+            )
+        );
+    }
+    if len(specs) > 2 {
+        sc = specs[2];
+        futures.append(
+            launch_lane(
+                sc.node, sc.lane_id, sc.phrases_json,
+                ctx, hypothesis, offline, fixture_json, deadline
+            )
+        );
+    }
+    if len(specs) > 3 {
+        # No silent cap: say what was dropped rather than quietly running three.
+        print(
+            f"RunResearch: {len(specs) - 3} LinkedIn lane(s) beyond the third "
+            + "were not launched - the fan-out is unrolled to three by design."
+        );
+    }
 
     # Lane D is GitHub-first and programmatic - it never opens a browser, which
     # is exactly the visual contrast the demo wants. Owned by the identity
@@ -1601,12 +1633,14 @@ impl RunResearch.start with Founder entry {
             )
         );
     }
-    gh_futures = [
-        launch_github(
-            s.lane_jid, s.phrases_json, s.pains_json, s.negatives_json
-        )
-        for s in gh_specs
-    ];
+    gh_futures = [];
+    for gs in gh_specs {
+        gh_futures.append(
+            launch_github(
+                gs.node, gs.phrases_json, gs.pains_json, gs.negatives_json
+            )
+        );
+    }
 
     # ---- collect: only now do we block ------------------------------------
     # ---- Lane W: the warm lead, in the same fan-out --------------------
@@ -1648,7 +1682,7 @@ impl RunResearch.start with Founder entry {
 # --- Lane D ----------------------------------------------------------------
 
 def run_github_lane(
-    lane_jid: str, keywords_json: str, pains_json: str, negatives_json: str
+    lane_node: Lane, keywords_json: str, pains_json: str, negatives_json: str
 ) -> LaneResult {
     """Lane D, in its own thread alongside the three browser lanes.
 
@@ -1657,7 +1691,6 @@ def run_github_lane(
     terminal. Owned by the identity track; launched here so all four lanes are
     genuinely in flight at the same time rather than run one after another.
     """;
-    lane_node = resolve_lane(lane_jid);
     t0 = time.time();
     w = GithubLane(
         keywords=json.loads(keywords_json) if keywords_json else [],

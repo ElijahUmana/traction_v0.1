@@ -5,8 +5,13 @@ GitHub - talk to this system, and there is not one line of routing glue. Each
 one is a walker on a persistent graph. The language generated the endpoints.
 
     jac check .                 # typecheck the whole project
-    jac start main.jac --no-client   # serve the API on :8000
+    jac start main.jac          # serve the API *and* the web client on :8000
     jac run main.jac            # bootstrap banner + graph stats
+
+`--no-client` is deliberately gone. It is exactly the flag that stops the web
+client being built and served, and this program now serves both surfaces from
+one process. Two processes cannot share the anchor store (JAC_GOTCHAS 8e), so
+"API here, UI there" is not an option - it is one process or a corrupt graph.
 
 -----------------------------------------------------------------------------
 ENDPOINT REGISTRY - READ THIS BEFORE ADDING AN ENDPOINT
@@ -47,6 +52,12 @@ import from research {
     LaneResult, LaneSpec, CommentVerdict
 }
 import from githublane { GithubLane }
+# ResearchWarmLead is the single-lane route for the warm lead: RunResearch fans
+# out five lanes and takes minutes, this runs only the one the email and the
+# call depend on, in about forty seconds. It must be imported HERE, not merely
+# declared walker:pub in lane_w.jac - a walker nobody imports into the entry
+# module gets no route and POST /walker/ResearchWarmLead returns 405.
+import from lane_w { ResearchWarmLead }
 import from identity { CrossLinkToGithub, CrossLinkToLinkedIn, ResolveEmail, RankAndSelect }
 import from outreach { ComposeOutreach, SendOutreach, OnEmailReply }
 # vapi_kb and vapi_book are the only two endpoints in this program that are
@@ -70,6 +81,30 @@ import from feed {
     LiveFeed, list_lanes, list_prospects, get_run_state,
     feed_since, feed_backlog,
     LaneView, RunStateView, ReasoningView, FeedBatch
+}
+
+# --- the web client's server contract ----------------------------------------
+# Becky's client (`frontend.cl.jac`) reaches the server with `sv import`, not
+# with fetch - it calls these thirteen by NAME and Jac generates the RPC. So
+# these names ARE the frontend contract; changing one changes her UI. They must
+# be listed here for the same reason every other endpoint is (see above).
+#
+# `WorkspaceView` is the single return type of all thirteen and must be imported
+# alongside them or the call is a server-side NameError at request time.
+#
+# Only `WorkspaceView` is taken from `views` on purpose. `views.jac` also
+# declares `ProspectView` and `OutreachDraft`, and so does `contracts.jac`, with
+# different shapes - importing both here would silently shadow one with the
+# other. `feed.jac` needs the contracts pair, so the contracts pair is what this
+# module binds; the views pair stays resolved inside `views.jac` and `bridge.jac`.
+import from views { WorkspaceView }
+import from bridge {
+    bootstrap_workspace, reset_workspace,
+    begin_product, confirm_understanding, add_artifact,
+    build_personas, save_persona_feedback,
+    run_signal_search, draft_outreach,
+    send_outreach, schedule_demo_call, schedule_demo_meeting,
+    synthesize_demo_interview
 }
 
 
@@ -108,6 +143,27 @@ def:pub graph_health -> dict[str, int] {
         "converged_prospects": converged,
         "dropped_prospects": dropped
     };
+}
+
+
+# --- the web client -----------------------------------------------------------
+# Becky built the whole UI as a Jac `cl` client. This block is what makes the
+# ONE `jac start main.jac` serve it: `[serve] base_route_app = "app"` in
+# jac.toml routes `/` at this function, and `.frontend` resolves to
+# `frontend.cl.jac` in this directory.
+#
+# It lives in main.jac rather than a second entry point because the API and the
+# UI must be the same process. Two jac processes against one `.jac/data` anchor
+# store diverge the guest root and end in permanent 500s that no restart heals
+# (JAC_GOTCHAS 8e / 8e-iii) - so a separate UI server is not a lighter option,
+# it is the outage.
+cl {
+    import "./styles.global.css";
+    import from .frontend { TractionApp }
+
+    def:pub app -> JsxElement {
+        return <TractionApp/>;
+    }
 }
 
 

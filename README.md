@@ -18,7 +18,7 @@ The demo names that person, emails that person, calls that person, and books tha
 
 > The rubric asks us to point at it in the repo. Here is the map.
 >
-> **Product code is 100% Jac — 16,030 lines of `.jac` and not one line of anything else in the product path.** Including operational tooling (`ops/`: test harnesses, proof scripts, run plumbing — none of which ships) the repo is 82.9% Jac. Verify either number yourself with `ops/jac_audit.sh`; it prints both.
+> **Product code is 96.3% Jac — 22,254 lines of `.jac`.** The only non-Jac line in the product path is `becky_ui/styles.global.css` (862 lines of stylesheet for the dashboard); every walker, archetype, endpoint, and the entire browser/WebSocket/CDP stack is Jac. Including operational tooling (`ops/`: test harnesses, proof scripts, run plumbing — none of which ships) the repo is 84.0% Jac. Verify both numbers yourself with `ops/jac_audit.sh`; it prints them and shows its method.
 
 | Layer | Where Jac does the work | File |
 |---|---|---|

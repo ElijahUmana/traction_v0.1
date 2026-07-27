@@ -3,21 +3,52 @@ name = "traction"
 version = "0.1.0"
 description = "TRACTION - a persistent prospect graph that finds one human from four directions at once, then emails, calls, and books them. JacHacks SF 2026."
 entry-point = "main.jac"
-kind = "service"
+# was "service". The web client (main.jac's `cl` block -> frontend.cl.jac) is
+# built and served by the same program that serves the walkers; "service" builds
+# no client bundle at all.
+kind = "web-app"
 jac-version = "==0.34.7"
 
 [dependencies]
 byllm = "~=0.6"
 
+# npm packages for the client bundle, from Becky's web-app config. React 18 is
+# what her 3,556 lines of JSX are written against - do not float it to 19.
+[dependencies.npm]
+react = "^18.2.0"
+react-dom = "^18.2.0"
+react-router-dom = "^6.22.0"
+react-error-boundary = "^5.0.0"
+"@tanstack/react-form" = "^1.33.0"
+zod = "^4.3.6"
+
+[dependencies.npm.dev]
+vite = "^6.4.1"
+"@vitejs/plugin-react" = "4.7.0"
+typescript = "^5.3.3"
+"@types/react" = "^18.2.0"
+"@types/react-dom" = "^18.2.0"
+
 [byllm.model]
 default_model = "anthropic/claude-sonnet-4-6"
 api_key = "${ANTHROPIC_API_KEY}"
 
+# Deliberately NOT merged from Becky's jac.toml: her `default_model =
+# "gpt-4o-mini"` and her global `max_tokens = 900`. We hold an Anthropic key,
+# not an OpenAI one, and a project-wide 900-token ceiling would truncate the
+# research and outreach generations. Her per-call `by llm(max_tokens=900)`
+# annotations still apply where she wanted them.
 [byllm.call_params]
 temperature = 0.2
 
 [serve]
 port = 8000
+# Routes `/` at `def:pub app` in main.jac's `cl` block. Without this the client
+# compiles and is bundled but nothing is mounted at the root URL.
+base_route_app = "app"
+
+[client]
+title = "Traction — Founder research agent"
 
 # WebSocket tuning for the live dashboard. NOT required for WS to work - A/B
 # verified: with this block removed, /ws/walker/LiveFeed still registers and
