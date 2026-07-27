@@ -145,28 +145,74 @@ glob EXPAND_COMMENTS_JS: str = """
 })()
 """;
 
-glob READ_COMMENTS_JS: str = """
+# Follower counts are NOT rendered on search result cards - verified against
+# live LinkedIn. They ARE on the post page. Lane A's mid-tier gate would be a
+# hollow claim if it only ever saw "unknown", so the gate runs here instead.
+glob AUTHOR_STATS_JS: str = """
 (() => {
-  const out = [];
-  const items = document.querySelectorAll('article.comments-comment-entity, article.comments-comment-item, div.comments-comment-item');
-  for (const it of items) {
-    const who = it.querySelector('a[href*="/in/"]');
-    const href = who ? (who.href || '').split('?')[0] : '';
-    const m = href.match(/\\/in\\/([^\\/]+)/);
-    const body = it.querySelector('.comments-comment-item__main-content, .update-components-text, .comments-comment-entity__content');
-    const text = (body ? body.innerText : it.innerText || '').trim();
-    if (!text) continue;
-    out.push({
-      handle: m ? m[1] : '',
-      url: href,
-      name: who ? (who.innerText || '').trim().split('\\n')[0] : '',
-      text: text.slice(0, 700)
-    });
-    if (out.length >= 60) break;
-  }
-  return JSON.stringify(out);
+  const t = document.body ? document.body.innerText : '';
+  const m = t.match(/([0-9][0-9,\\.]*)\\s*([KkMm]?)\\s*followers/);
+  return JSON.stringify({followers: m ? m[0] : ''});
 })()
 """;
+
+glob READ_COMMENTS_JS: str = """
+(() => {
+  const SEL = 'article.comments-comment-entity, article.comments-comment-item, div.comments-comment-item';
+  const BODY_SEL = '.comments-comment-item__main-content, .update-components-text, .comments-comment-entity__content';
+  const out = [];
+  const seen = new Set();
+  const add = (el, via) => {
+    const who = el.querySelector('a[href*="/in/"]');
+    if (!who) return;
+    const href = (who.href || '').split('?')[0];
+    const m = href.match(/\\/in\\/([^\\/]+)/);
+    const handle = m ? m[1] : '';
+    if (!handle || seen.has(handle)) return;
+    const body = el.querySelector(BODY_SEL);
+    const text = (body ? body.innerText : el.innerText || '').trim();
+    // A comment is prose attached to one person. Anything shorter is chrome.
+    if (text.length < 25) return;
+    seen.add(handle);
+    out.push({handle: handle, url: href,
+              name: (who.innerText || '').trim().split('\\n')[0],
+              text: text.slice(0, 700), via: via});
+  };
+
+  let items = document.querySelectorAll(SEL);
+  const containers = items.length;
+  for (const it of items) { add(it, 'class'); if (out.length >= 60) break; }
+
+  // Class names rotate - .pv-top-card did, and this extractor is Lane A's core.
+  // If the known selectors match nothing, fall back to structure: any element
+  // holding exactly one profile link and enough prose to be a comment. The
+  // gates are the same either way so the fallback cannot lower the bar.
+  let via2 = 0;
+  if (!out.length) {
+    const cands = document.querySelectorAll('[class*="comments-comment"], article, li[data-id], div[data-id]');
+    for (const el of cands) {
+      if (el.querySelectorAll('a[href*="/in/"]').length !== 1) continue;
+      add(el, 'structure');
+      via2++;
+      if (out.length >= 60) break;
+    }
+  }
+
+  return JSON.stringify({
+    items: out,
+    diag: {
+      containers: containers,
+      wildcard: document.querySelectorAll('[class*="comments-comment"]').length,
+      anchors: document.querySelectorAll('a[href*="/in/"]').length,
+      fallback_scanned: via2,
+      body_len: (document.body ? document.body.innerText : '').length
+    }
+  });
+})()
+""";
+
+
+
 
 
 obj LaneBrowser {
@@ -255,7 +301,21 @@ impl LaneBrowser.eval_json(expr: str) -> any {
         return None;
     }
     try {
-        return self.session.eval_json(expr);
+        raw = self.session.eval_json(expr);
+        # The extractors end in `JSON.stringify(...)`, so CDP hands back a
+        # STRING and `eval_json` faithfully returns it. Decoding here rather
+        # than returning the array straight from the page is deliberate:
+        # returnByValue marshalling of a live object graph is the flakier path,
+        # and a string round-trip is predictable. Verified against real
+        # LinkedIn - without this the lane iterates the JSON text character by
+        # character and every "row" is a one-character string.
+        if isinstance(raw, str) {
+            if not raw.strip() {
+                return [];
+            }
+            return json.loads(raw);
+        }
+        return raw;
     } except Exception as e {
         self.last_error = f"evaluate failed: {type(e).__name__}: {e}";
         return None;
@@ -320,17 +380,115 @@ def parse_recency_days(block: str) -> int {
 }
 
 
-def parse_headline(block: str, name: str) -> str {
-    """The line under the name. Skips the name itself and degree badges.""";
+
+# LinkedIn wraps the profile link's text in chrome - verified live: names came
+# back as "View Neel Mahyavanshi's profile, open to work" and the first content
+# line was "Feed post". Both are parsed off rather than shown to a judge.
+glob NAME_CHROME_PREFIX: list[str] = ["view ", "voir ", "ver "];
+glob BLOCK_CHROME: list[str] = [
+    "feed post", "suggested", "promoted", "follow", "featured", "status is"
+];
+# Longest-first: matching "3rd" before "3rd+" leaves a stray "+" on the headline.
+glob DEGREE_TOKENS: list[str] = ["3rd+", "2nd+", "1st+", "3rd", "2nd", "1st"];
+
+
+obj Actor {
+    """A post author's display name and headline, cleaned of LinkedIn chrome."""
+    has name: str = "";
+    has headline: str = "";
+}
+
+
+def clean_name(raw: str) -> str {
+    """Strip the "View X's profile, open to work" wrapper off anchor text.""";
+    s = " ".join(raw.split()).strip();
+    if not s {
+        return "";
+    }
+    low = s.lower();
+    for pre in NAME_CHROME_PREFIX {
+        if low.startswith(pre) {
+            s = s[len(pre):];
+            break;
+        }
+    }
+    for marker in ["\u2019s profile", "'s profile", "s profile"] {
+        idx = s.lower().find(marker);
+        if idx > 0 {
+            s = s[:idx];
+            break;
+        }
+    }
+    return s.strip().strip(",").strip();
+}
+
+
+def clean_headline(raw: str) -> str {
+    """Drop the timestamp and follow-button text LinkedIn appends to the line.
+
+    A headline reads "AI Engineer 25m Follow" straight off the card; the two
+    trailing tokens are chrome and would show up in the demo UI.
+    """;
+    s = " ".join(raw.split()).strip();
+    cut = re.search(r"\s\d+\s*(mo|[mhdwy])\b", s);
+    if cut {
+        s = s[:cut.start()];
+    }
+    for tail in ["Follow", "\u2022", "Connect", "Message"] {
+        while s.strip().endswith(tail) {
+            s = s.strip()[: -len(tail)].strip();
+        }
+    }
+    return s.strip(" \u2022-|").strip();
+}
+
+
+def parse_actor(block: str, anchor_name: str) -> Actor {
+    """Pull the author and headline out of a result card's text block.
+
+    The first content line looks like "Jay P. \u2022 3rd+ Staff AI Engineer @ Apple",
+    sometimes preceded by chrome such as "Feed post". Splitting on the bullet
+    beats trusting the anchor, which carries accessibility text.
+    """;
     for line in block.split("\n") {
         s = line.strip();
-        if not s { continue; }
-        if name and s.startswith(name) { continue; }
-        if re.fullmatch(r"(1st|2nd|3rd\+?|•|\W+)", s) { continue; }
-        if len(s) < 4 { continue; }
-        return s[:220];
+        if not s {
+            continue;
+        }
+        low = s.lower();
+        # `skip` is a reserved traversal keyword in Jac - hence is_chrome.
+        is_chrome = False;
+        for c in BLOCK_CHROME {
+            if low == c or low.startswith(c + " ") {
+                s = s[len(c):].strip() if low.startswith(c + " ") else "";
+                low = s.lower();
+                if not s {
+                    is_chrome = True;
+                }
+                break;
+            }
+        }
+        if is_chrome or not s {
+            continue;
+        }
+        parts = [x.strip() for x in s.split("\u2022")];
+        nm = parts[0].strip();
+        head = "";
+        if len(parts) > 1 {
+            rest = " ".join(parts[1:]).strip();
+            for d in DEGREE_TOKENS {
+                if rest.startswith(d) {
+                    rest = rest[len(d):].strip();
+                    break;
+                }
+            }
+            head = clean_headline(rest);
+        }
+        if nm {
+            return Actor(name=nm, headline=head[:220]);
+        }
     }
-    return "";
+    return Actor(name=clean_name(anchor_name), headline="");
 }
 
 
@@ -745,8 +903,22 @@ impl LaneA.harvest(here: Lane, probe: SearchProbe, results: list) -> int {
 
     for r in results {
         block = str(r.get("block", ""));
-        author = str(r.get("name", "")) or str(r.get("handle", ""));
-        followers = parse_followers(block);
+        actor = parse_actor(block, str(r.get("name", "")));
+        author = actor.name if actor.name else str(r.get("handle", ""));
+        post_url = str(r.get("url", ""));
+
+        # Follower counts are not on the search card (verified live), so the
+        # gate cannot run until we are on the post. Open it, then judge.
+        if not self.browser.goto(post_url) {
+            continue;
+        }
+        self.pace(t.action_delay);
+
+        stats = self.browser.eval_json(AUTHOR_STATS_JS);
+        followers = -1;
+        if stats is not None and isinstance(stats, dict) {
+            followers = parse_followers(str(stats.get("followers", "")));
+        }
 
         # The defining move: reject loudly, on the record.
         if followers >= 0 {
@@ -765,28 +937,61 @@ impl LaneA.harvest(here: Lane, probe: SearchProbe, results: list) -> int {
         } else {
             self.narrate(
                 here,
-                f"{author}'s follower count is not on this card, so I cannot size "
-                + "the audience from here. Opening the post to look rather than "
-                + "guessing.",
+                f"{author} does not publish a follower count, so I cannot size "
+                + "the audience. Reading the comments anyway, but weighting "
+                + "anything I find here lower.",
                 ReasoningKind.OBSERVE
             );
         }
 
-        post_url = str(r.get("url", ""));
-        if not self.browser.goto(post_url) {
-            continue;
-        }
-        self.pace(t.action_delay);
         self.browser.eval_json(EXPAND_COMMENTS_JS);
         self.pace(0.8);
-        comments = self.browser.eval_json(READ_COMMENTS_JS) or [];
+        # NOT named `harvest` - that is this walker's own method, and the local
+        # would shadow it.
+        raw_comments = self.browser.eval_json(READ_COMMENTS_JS) or [];
+        # Accept both shapes. The live extractor returns {items, diag}; the
+        # offline fixtures return a bare list, and a fixture should not have to
+        # be rewritten every time the diagnostics around it change.
+        comments: list = [];
+        diag: dict = {};
+        if isinstance(raw_comments, dict) {
+            comments = raw_comments.get("items") or [];
+            diag = raw_comments.get("diag") or {};
+        } else {
+            comments = raw_comments as list;
+        }
 
         if not comments {
-            self.narrate(
-                here, "Comments are closed on this one. Nothing to mine.",
-                ReasoningKind.MISS
-            );
+            # "Comments are closed" is a claim about LinkedIn. A selector that
+            # matched nothing is a claim about us. Saying the first when the
+            # second is true is how a lane reports zero comments on a post with
+            # forty-one and sounds confident doing it.
+            containers = int(diag.get("containers") or 0);
+            anchors = int(diag.get("anchors") or 0);
+            if containers == 0 and anchors > 2 {
+                self.narrate(
+                    here,
+                    f"My comment selector matched nothing on a page still showing "
+                    + f"{anchors} profile links, and the structural fallback found "
+                    + "no comment-shaped elements either. That is a scraper problem, "
+                    + "not an empty comment section - I am not going to call this post quiet.",
+                    ReasoningKind.MISS
+                );
+            } else {
+                self.narrate(
+                    here, "Comments are closed on this one. Nothing to mine.",
+                    ReasoningKind.MISS
+                );
+            }
             continue;
+        }
+        if comments and str(comments[0].get("via", "")) == "structure" {
+            self.narrate(
+                here,
+                f"LinkedIn has rotated the comment class names, so I read these "
+                + f"{len(comments)} by structure instead. Same quality gates.",
+                ReasoningKind.OBSERVE
+            );
         }
 
         texts = [str(c.get("text", "")) for c in comments];
@@ -816,17 +1021,20 @@ impl LaneA.harvest(here: Lane, probe: SearchProbe, results: list) -> int {
             c = comments[v.index];
             handle = str(c.get("handle", ""));
             if not handle { continue; }
+            conf = v.relevance if followers >= 0 else v.relevance * 0.8;
             cand = ProspectCandidate(
-                name=str(c.get("name", "")) or handle,
+                name=clean_name(str(c.get("name", ""))) or handle,
                 handle=handle,
                 headline="",
                 company="",
                 quote=str(c.get("text", "")),
                 source_url=post_url,
                 evidence_kind=EvidenceKind.COMMENT,
-                relevance=v.relevance
+                relevance=conf
             );
-            if self.record(here, probe, cand, EvidenceKind.COMMENT, parse_recency_days(block)) {
+            if self.record(
+                here, probe, cand, EvidenceKind.COMMENT, parse_recency_days(block)
+            ) {
                 got += 1;
             }
             if self.found + got >= t.target_yield { return got; }
@@ -895,8 +1103,9 @@ impl LaneB.harvest(here: Lane, probe: SearchProbe, results: list) -> int {
     for v in verdicts {
         if v.index >= len(keep) { continue; }
         r = keep[v.index];
-        author = str(r.get("name", "")) or str(r.get("handle", ""));
         block = str(r.get("block", ""));
+        actor = parse_actor(block, str(r.get("name", "")));
+        author = actor.name if actor.name else str(r.get("handle", ""));
 
         if not v.is_pain {
             self.skipped_abstract += 1;
@@ -914,7 +1123,7 @@ impl LaneB.harvest(here: Lane, probe: SearchProbe, results: list) -> int {
         cand = ProspectCandidate(
             name=author,
             handle=str(r.get("handle", "")),
-            headline=parse_headline(block, author),
+            headline=actor.headline,
             company="",
             quote=first_meaningful_line(block),
             source_url=str(r.get("url", "")),
@@ -989,7 +1198,8 @@ impl LaneC.harvest(here: Lane, probe: SearchProbe, results: list) -> int {
         if v.index >= len(keep) or not v.is_pain { continue; }
         r = keep[v.index];
         block = str(r.get("block", ""));
-        author = str(r.get("name", "")) or str(r.get("handle", ""));
+        actor = parse_actor(block, str(r.get("name", "")));
+        author = actor.name if actor.name else str(r.get("handle", ""));
         handle = str(r.get("handle", ""));
         if not handle { continue; }
 
@@ -1007,7 +1217,7 @@ impl LaneC.harvest(here: Lane, probe: SearchProbe, results: list) -> int {
         cand = ProspectCandidate(
             name=author,
             handle=handle,
-            headline=parse_headline(block, author),
+            headline=actor.headline,
             company="",
             quote=first_meaningful_line(block),
             source_url=str(r.get("url", "")),
