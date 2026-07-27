@@ -1,0 +1,100 @@
+GUEST-ROOT _lock 500: ROOT CAUSE, REPRODUCTION, AND FIX
+=======================================================
+Measured 2026-07-26 on jac 0.34.7 / macOS arm64, against a full copy of this
+repo at /tmp/ab-scale. Nothing here is inferred from symptoms; the mechanism
+was read out of the jaclang runtime that ships inside the `jac` binary
+(~/.cache/jac/rt/13d383ad3c816638-*/site/jaclang) and then reproduced.
+
+MECHANISM
+  jac0core/runtime.jac:85  _scale_provider   -> bare try/except ImportError,
+      no jac.toml gate, and jaclang.scale ships inside the binary. The scale
+      subsystem therefore loads ALWAYS.
+  scale/identity/impl/user_manager.impl.jac:1  JacScaleUserManager.postinit
+      overrides UserManager.postinit and never calls it.
+  runtimelib/impl/server.impl.jac:12  UserManager.postinit is the ONLY place
+      that sets `self._lock = threading.RLock()`.
+  => the scale user manager has no _lock at all, from boot.
+  runtimelib/impl/server.impl.jac:271  _abegin_user_request_context - when the
+      guest root anchor is missing it logs "Guest root anchor <id> is missing
+      from the anchor store" and calls reset_root() at line 305.
+  runtimelib/impl/server.impl.jac:80  UserManager.reset_root is NOT overridden
+      by the scale subclass, and its first statement is `with self._lock`.
+  => AttributeError -> HTTP 500. reset_root IS the repair path, so it can never
+     repair itself: every subsequent request takes the same branch forever.
+
+  Doubly broken: even with _lock present, reset_root does `SELECT 1 FROM users`
+  against main.db, while scale keeps identities in .jac/data/users.db
+  (SqliteIdentityStorage). The guest heal path cannot work under scale at all.
+
+[scale.websocket] IS NOT THE CAUSE - A/B, two full copies, fresh data, 60
+anonymous POSTs each (graph_health / list_lanes / feed_since):
+    with    [scale.*]:  healthy_after=24s  TOTAL=60 OK=60 FAIL=0
+    without [scale.*]:  healthy_after=23s  TOTAL=60 OK=60 FAIL=0
+The copy WITHOUT the block logged the scale Redis warning 63 times, and both
+copies logged:
+    INFO - Registered WebSocket walker endpoint: /ws/walker/LiveFeed
+Removing the block neither fixes the 500s nor costs the WebSocket routes.
+
+PREFLIGHT PREDICATE - unit-tested with the function extracted from the shipped
+ops/restart.sh (users.db stores the root as bare hex, anchor_store.db keys the
+same uuid WITH dashes; compare dash-stripped or it repairs a healthy dir every
+boot):
+    consistent (dashed vs hex)          -> consistent  PASS
+    guest root absent from anchors      -> ORPHANED    PASS
+    anchor_store.db missing entirely    -> ORPHANED    PASS
+    empty data dir                      -> consistent  PASS
+    users.db present, guest not minted  -> consistent  PASS
+
+END-TO-END: BRICK -> REPAIR -> SUSTAINED LOAD
+=== P0: boot once so the runtime creates real users.db + anchor_store.db ===
+P0 boot: 50s
+P0 probe(10): OK=10 FAIL=0
+P0 guest root=8af8e59d07974100ac7d8fca1ebe050c  anchors=4
+
+=== P1: BRICK - surgically delete ONLY the guest root anchor. users.db untouched. ===
+    (this is the divergence in its purest form: the graph keeps every other
+     node, so a fix that heals by wiping the graph would be visible as data loss)
+P1 anchors 4 -> 3 (guest root anchor removed); users.db still says root=8af8e59d07974100ac7d8fca1ebe050c
+P1 boot (no preflight): 27s
+P1 probe(12) EXPECT ALL FAIL: OK=0 FAIL=12
+P1 _lock AttributeErrors in log: 9
+P1 warning: 'missing from the anchor store'
+
+=== P2: THE FIX - shipped ops/restart.sh, no --clean ===
+==> stopping any running server
+    port 8901 is free
+==> guest-root preflight
+    !! .jac/data is divergent: users.db points the guest at a root that
+       anchor_store.db does not contain. Left alone, EVERY request would
+       500 with the _lock AttributeError described at the top of this file.
+    -> dropping users.db only; the graph in anchor_store.db is preserved
+==> starting
+    sourcing .env (jac start does not read it itself)
+    still booting (30s) - a post-`jac clean` boot recompiles everything
+    still booting (60s) - a post-`jac clean` boot recompiles everything
+    healthy after 68s
+==> warmup (first anonymous request also initialises the guest root)
+    warmup: 200
+==> smoke gate (12 anonymous walker/function POSTs)
+    12/12 OK
+==> websocket routes registered:
+    INFO - Registered WebSocket walker endpoint: /ws/walker/LiveFeed (+ legacy /ws/LiveFeed)
+==> ready on http://127.0.0.1:8901
+P2 restart.sh exit=0
+
+=== P3: 60 sustained anonymous POSTs on the repaired server ===
+P3 probe(60): OK=60 FAIL=0
+P3 last body: {"ok":true,"type":"response","data":{"result":{"founders":0,"runs":0,"lanes":0,"probes":0,"reasoning":0,"prospects":0,"converged_prospects":
+P3 _lock errors in repaired log: 0
+P3 anchors after repair: 6  (was 3 before repair - graph NOT wiped)
+P3 new guest root=cc86858feac24d2aa94028664c0837bc
+=== DONE ===
+
+The P1 brick deleted exactly ONE row from the anchors table - the guest
+root - leaving every other node intact, so a fix that healed by wiping the
+graph would have shown up as data loss. It did not: anchors went 3 -> 6
+across the repair and the 60-request run.
+
+Server log at the moment of the brick (/tmp/v4-brick.log):
+Guest root anchor 8af8e59d07974100ac7d8fca1ebe050c is missing from the anchor store; minting a fresh guest root.
+fastapi.exceptions.HTTPException: 500: 'JacScaleUserManager' object has no attribute '_lock'
