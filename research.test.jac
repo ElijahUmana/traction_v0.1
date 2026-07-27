@@ -42,8 +42,13 @@ glob FIXTURE: dict = {
         {"handle": "dana-okafor", "url": "https://www.linkedin.com/in/dana-okafor",
          "name": "Dana Okafor", "block": POST_BLOCK_MIDTIER}
     ],
-    # Lane A's comment pass under that mid-tier post.
-    "_comments": [
+    # Author stats read on the POST page - follower counts are not rendered on
+    # search cards at all, which is why lane A's gate runs after opening the post.
+    "in/famous-person": {"followers": "412,000 followers"},
+    "in/dana-okafor": {"followers": "870 followers"},
+    # Lane A's comment pass. The reader returns {items, diag} - diag carries the
+    # container/anchor counts the lane narrates when a section looks empty.
+    "_comments": {"diag": {"containers": 3, "anchors": 3}, "items": [
         {"handle": "priya-raman", "url": "https://www.linkedin.com/in/priya-raman",
          "name": "Priya Raman",
          "text": "Great post! Congratulations on the launch, really inspiring."},
@@ -55,7 +60,7 @@ glob FIXTURE: dict = {
          "name": "Sam Oyelaran",
          "text": "I gave up on our evaluation harness entirely after we lost "
                  + "three days chasing a silent retrieval regression."}
-    ],
+    ]},
     # Lane B - authorship. Distinct person.
     "we%20tried": [
         {"handle": "lee-park", "url": "https://www.linkedin.com/in/lee-park",
@@ -123,6 +128,36 @@ test "ladder escalates seed to widen to reformulate to next phrase" {
         assert p.reason;
     }
     assert next_rung(lad, len(lad) - 1) is None;
+}
+
+
+test "linkedin chrome is stripped off names and headlines" {
+    # Verified against live LinkedIn: the profile anchor's text is accessibility
+    # chrome, and the first block line is often "Feed post".
+    assert clean_name("View Neel Mahyavanshi\u2019s profile, open to work") == "Neel Mahyavanshi";
+    assert clean_name("View Robin R.\u2019s profile") == "Robin R.";
+
+    a = parse_actor(
+        "Feed post Neel Mahyavanshi \u2022 2nd AI Engineer 25m \u2022 Follow",
+        "View Neel Mahyavanshi\u2019s profile"
+    );
+    assert a.name == "Neel Mahyavanshi", a.name;
+    assert "Feed post" not in a.headline;
+    assert "AI Engineer" in a.headline, a.headline;
+
+    b = parse_actor("Jay P. \u2022 3rd+ Staff AI Engineer @ Apple", "");
+    assert b.name == "Jay P.", b.name;
+    assert b.headline.startswith("Staff AI Engineer"), b.headline;
+}
+
+
+test "follower counts parse from post-page text, unknown stays unknown" {
+    assert parse_followers("412,000 followers") == 412000;
+    assert parse_followers("870 followers") == 870;
+    assert parse_followers("12K followers") == 12000;
+    # A card with no follower count must report UNKNOWN, never zero - lane A
+    # gates on this and a fabricated zero would silently reject real people.
+    assert parse_followers("Staff Engineer at Northwind") == -1;
 }
 
 

@@ -256,3 +256,42 @@ test "linkedin_handle survives query strings, fragments and trailing slashes" {
     assert linkedin_handle("https://github.com/someone") == "";
     assert linkedin_handle("") == "";
 }
+
+
+# REGRESSION. A live run resolved `brandonbennett@macbookair.myfiosgateway.com`
+# and kept it. git writes <user>@<hostname> when no email is configured, and on
+# a home network that hostname carries the router's own suffix. The result
+# satisfies every RFC, passes a naive syntax check, and reaches nobody - and it
+# came from step 2, the highest-trust source, so attribution could not save it.
+test "machine hostnames and router suffixes are not deliverable" {
+    observed: list[str] = [
+        "brandonbennett@macbookair.myfiosgateway.com",
+        "dev@Johns-MacBook-Pro.local",
+        "user@ubuntu.lan",
+        "me@thinkpad.home",
+        "builder@ip-172-31-0-42.ec2.internal",
+        "runner@runnervmABC.attlocal.net"
+    ];
+    for e in observed {
+        v = judge_email(e, "2:search/commits", "someone", "Some One");
+        assert not v.ok, f"{e} has no mailbox behind it";
+        assert "undeliverable" in v.reason;
+    }
+}
+
+
+# The guard must not eat real addresses that merely contain a substring.
+test "real domains that look machine-ish still pass" {
+    keep: list[str] = [
+        "ryan.packer@gmail.com",
+        "tyler@tylerharper.dev",
+        "agi@icdev.ai",
+        "b.alfaris@gmail.com",
+        "hi@desktopmetal.com",
+        "team@laptopmag.co.uk"
+    ];
+    for e in keep {
+        d = is_deliverable(e);
+        assert (d[0] as bool), f"{e} is a real address and must survive: {d[1]}";
+    }
+}

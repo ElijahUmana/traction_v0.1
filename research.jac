@@ -1263,12 +1263,29 @@ obj LaneSpec {
     has phrases: list[str] = [];
     has pains: list[str] = [];
     has negatives: list[str] = [];
+    # Pre-encoded at construction: only scalars and strings cross a `flow`
+    # boundary cleanly (E1308), and decoding per-thread also guarantees no two
+    # lanes share one mutable list.
+    has lane_jid: str = "";
+    has phrases_json: str = "";
+    has pains_json: str = "";
+    has negatives_json: str = "";
+}
+
+
+def resolve_lane(lane_jid: str) -> Lane {
+    """Turn a lane's jid back into its node inside the worker thread.""";
+    n = jobj(lane_jid);
+    if not isinstance(n, Lane) {
+        raise ValueError(f"jid {lane_jid} does not resolve to a Lane");
+    }
+    return n;
 }
 
 
 def run_lane(
-    lane_node: Lane, lane_id: str, context_id: str, hypothesis: str,
-    phrases: list[str], offline: bool, fixture_json: str
+    lane_jid: str, lane_id: str, context_id: str, hypothesis: str,
+    phrases_json: str, offline: bool, fixture_json: str
 ) -> LaneResult {
     """One lane, start to finish, inside its own thread.
 
@@ -1279,7 +1296,9 @@ def run_lane(
     container is not sendable across a concurrency boundary (E1308), and
     decoding per-thread guarantees no lane can mutate another lane's copy.
     """;
+    lane_node = resolve_lane(lane_jid);
     fixture: dict = json.loads(fixture_json) if fixture_json else {};
+    phrases: list[str] = json.loads(phrases_json) if phrases_json else [];
     w: LinkedInLane = LaneC(
         lane_id=LaneId.C, context_id=context_id, hypothesis=hypothesis,
         phrases=phrases, offline=offline, fixture=fixture
@@ -1314,6 +1333,35 @@ def run_lane(
         live_url=lane_node.live_url,
         started_at=t0,
         finished_at=time.time()
+    );
+}
+
+
+def launch_lane(
+    lane_jid: str, lane_id: str, phrases_json: str,
+    ctx: str, hyp: str, off: bool, fx: str
+) -> any {
+    """Start one lane and hand back its future.
+
+    Launching through a function rather than writing `flow run_lane(s.node, ...)`
+    inline in the comprehension is NOT stylistic. In Jac 0.34.7 a `flow` call
+    whose arguments reference the comprehension's loop variable is racy: the
+    thread can read that variable AFTER the loop has advanced, so every lane
+    ends up running the LAST spec. Observed live - all three panels became lane
+    C, writing 3x the narration onto one Lane node while A and B sat empty.
+    A function call gives each invocation its own parameter binding, so there is
+    no shared variable left for a thread to re-read.
+    """;
+    return flow run_lane(lane_jid, lane_id, ctx, hyp, phrases_json, off, fx);
+}
+
+
+def launch_github(
+    lane_jid: str, keywords_json: str, pains_json: str, negatives_json: str
+) -> any {
+    """Same eager-binding rule as launch_lane - see the note there.""";
+    return flow run_github_lane(
+        lane_jid, keywords_json, pains_json, negatives_json
     );
 }
 
@@ -1377,7 +1425,12 @@ impl RunResearch.start with Founder entry {
         lane_node = run +>:HasLane(launched_at=time.time()):+> Lane(
             lane_id=LaneId(lid), doctrine=t.doctrine, keywords=phrases
         );
-        specs.append(LaneSpec(node=lane_node, lane_id=lid, phrases=phrases));
+        specs.append(
+            LaneSpec(
+                node=lane_node, lane_id=lid, phrases=phrases,
+                lane_jid=jid(lane_node), phrases_json=json.dumps(phrases)
+            )
+        );
     }
 
     # ---- launch: every lane starts NOW ------------------------------------
@@ -1386,10 +1439,13 @@ impl RunResearch.start with Founder entry {
     hypothesis: str = icp.hypothesis;
     offline: bool = self.offline;
     fixture_json: str = json.dumps(self.fixture) if self.fixture else "";
+    # Attribute reads happen here, at the call site, BEFORE the thread starts -
+    # that is what removes the race. Lists cross as JSON (E1308: a container is
+    # not sendable across a concurrency boundary) and are decoded per-thread.
     futures = [
-        flow run_lane(
-            s.node, s.lane_id, ctx, hypothesis, s.phrases, offline,
-            fixture_json
+        launch_lane(
+            s.lane_jid, s.lane_id, s.phrases_json,
+            ctx, hypothesis, offline, fixture_json
         )
         for s in specs
     ];
@@ -1399,25 +1455,32 @@ impl RunResearch.start with Founder entry {
     # track; launched here so all four are genuinely in flight together.
     gh_specs: list[LaneSpec] = [];
     if self.include_github and not self.offline {
+        gh_node = run +>:HasLane(launched_at=time.time()):+> Lane(
+            lane_id=LaneId.D,
+            doctrine="GitHub-first. I never open a browser - I read code, "
+                     + "issues and commit history through the API, and I "
+                     + "generate my own candidates instead of inheriting "
+                     + "theirs.",
+            keywords=icp.keywords
+        );
         gh_specs.append(
             LaneSpec(
-                node=run +>:HasLane(launched_at=time.time()):+> Lane(
-                    lane_id=LaneId.D,
-                    doctrine="GitHub-first. I never open a browser - I read "
-                             + "code, issues and commit history through the API, "
-                             + "and I generate my own candidates instead of "
-                             + "inheriting theirs.",
-                    keywords=icp.keywords
-                ),
+                node=gh_node,
                 lane_id="D",
                 phrases=icp.keywords,
                 pains=icp.pain_phrases,
-                negatives=icp.negative_keywords
+                negatives=icp.negative_keywords,
+                lane_jid=jid(gh_node),
+                phrases_json=json.dumps(icp.keywords),
+                pains_json=json.dumps(icp.pain_phrases),
+                negatives_json=json.dumps(icp.negative_keywords)
             )
         );
     }
     gh_futures = [
-        flow run_github_lane(s.node, s.phrases, s.pains, s.negatives)
+        launch_github(
+            s.lane_jid, s.phrases_json, s.pains_json, s.negatives_json
+        )
         for s in gh_specs
     ];
 
@@ -1432,7 +1495,7 @@ impl RunResearch.start with Founder entry {
 # --- Lane D ----------------------------------------------------------------
 
 def run_github_lane(
-    lane_node: Lane, keywords: list[str], pains: list[str], negatives: list[str]
+    lane_jid: str, keywords_json: str, pains_json: str, negatives_json: str
 ) -> LaneResult {
     """Lane D, in its own thread alongside the three browser lanes.
 
@@ -1441,9 +1504,12 @@ def run_github_lane(
     terminal. Owned by the identity track; launched here so all four lanes are
     genuinely in flight at the same time rather than run one after another.
     """;
+    lane_node = resolve_lane(lane_jid);
     t0 = time.time();
     w = GithubLane(
-        keywords=keywords, pain_phrases=pains, negative_keywords=negatives
+        keywords=json.loads(keywords_json) if keywords_json else [],
+        pain_phrases=json.loads(pains_json) if pains_json else [],
+        negative_keywords=json.loads(negatives_json) if negatives_json else []
     );
     try {
         lane_node spawn w;

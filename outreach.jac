@@ -277,9 +277,27 @@ def founder_context -> dict {
 }
 
 
-"""Collapse whitespace and case so re-wrapping does not defeat a match."""
+"""Reduce text to comparable word tokens: case, punctuation and quoting removed.
+
+Collapsing case and whitespace is not enough. When the model quotes a citation
+it wraps it in quotation marks - which is correct writing - and those marks fuse
+onto the boundary tokens: `"my` and `management."` no longer equal `my` and
+`management`. A correctly quoted nine-word sentence then measures as a
+SEVEN-word run against its own source, so the effective bar becomes ten words
+rather than eight, and the better the model quotes the more likely it is to be
+rejected. Typographic quotes and em dashes do the same thing.
+
+So punctuation is stripped from both sides before tokenising. This compares the
+two strings on equal terms; it does not weaken the check, because the run-length
+requirement is unchanged and still measured in whole words.
+"""
 def normalize(text: str) -> str {
-    return " ".join(text.lower().split());
+    folded = (text.lower()
+        .replace("\u201c", '"').replace("\u201d", '"')
+        .replace("\u2018", "'").replace("\u2019", "'")
+        .replace("\u2014", " ").replace("\u2013", " "));
+    kept = "".join([c if (c.isalnum() or c.isspace()) else " " for c in folded]);
+    return " ".join(kept.split());
 }
 
 
@@ -599,7 +617,11 @@ async walker:pub ComposeOutreach(ProspectLookup) {
                 "ok": False,
                 "refused": True,
                 "prospect": here.name,
+                "addressed_as": address_as(here),
                 "prospect_id": jid(here),
+                "linkedin_quote": linkedin_quote,
+                "linkedin_quote_kind": citation.kind,
+                "github_artifact": github_artifact,
                 "reason": (
                     "refusing to compose: the graph holds nothing this person actually "
                     + "wrote and no GitHub artifact they built, so any email would be "
@@ -653,6 +675,10 @@ async walker:pub ComposeOutreach(ProspectLookup) {
                 "prospect_id": jid(here),
                 "reason": f"refusing to send an ungrounded draft: {problem}",
                 "source": source,
+                "addressed_as": called,
+                "linkedin_quote": linkedin_quote,
+                "linkedin_quote_kind": citation.kind,
+                "github_artifact": github_artifact,
                 "subject": draft.subject,
                 "body": draft.body
             };

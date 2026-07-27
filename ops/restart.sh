@@ -197,11 +197,14 @@ curl -s -m 10 -o /dev/null -w "    warmup: %{http_code}\n" -X POST \
 # anonymous endpoint traffic comes back clean.
 smoke() {
   local n code ep body fails=0
+  # Exactly the four the dashboard polls (docs/FRONTEND_INTEGRATION.md). Testing
+  # something the dashboard does not call would prove nothing about the demo.
   for n in $(seq 1 12); do
-    case $((n % 3)) in
-      0) ep="function/graph_health";  body='{}' ;;
-      1) ep="function/list_lanes";    body='{}' ;;
-      2) ep="function/feed_since";    body='{"since":"0"}' ;;
+    case $((n % 4)) in
+      0) ep="function/graph_health";   body='{}' ;;
+      1) ep="function/list_lanes";     body='{}' ;;
+      2) ep="function/feed_since";     body='{"since":"0"}' ;;
+      3) ep="function/list_prospects"; body='{}' ;;
     esac
     code="$(curl -s -m 20 -o /dev/null -w '%{http_code}' -X POST \
       "http://127.0.0.1:$PORT/$ep" -H 'Content-Type: application/json' \

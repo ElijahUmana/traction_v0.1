@@ -69,7 +69,31 @@ glob DEAD_DOMAINS: list[str] = [
 """Reserved / non-routable TLDs (RFC 2606 and RFC 6761). `.local` in particular
 shows up constantly in commits made on a machine with no configured git email."""
 glob DEAD_TLDS: list[str] = [
-    ".local", ".invalid", ".test", ".example", ".localdomain", ".internal", ".lan"
+    ".local", ".invalid", ".test", ".example", ".localdomain", ".internal", ".lan",
+    ".home", ".homenet", ".corp", ".localhost", ".arpa"
+];
+
+"""Residential-gateway and carrier-assigned domains. git falls back to
+`<user>@<hostname>` when no email is configured, and on a home network the
+hostname resolves through the router's own suffix. A live run produced
+`brandonbennett@macbookair.myfiosgateway.com` - syntactically perfect, passes
+every RFC check, and there is no mailbox behind it anywhere on the internet.
+
+These are the suffixes the major consumer ISPs hand out."""
+glob GATEWAY_DOMAINS: list[str] = [
+    "myfiosgateway.com", "attlocal.net", "hsd1", "lightspeed", "res.rr.com",
+    "gateway.2wire.net", "fios-router.home", "router", "modem", "dhcp",
+    "in-addr", "broadband", "dynamic", "localdomain"
+];
+
+"""Hostname fragments that mark the left-hand label as a MACHINE, not a mail
+host. `macbookair.myfiosgateway.com` is caught by the gateway list; a corporate
+`jsmith@Johns-MacBook-Pro.company.com` is caught here."""
+glob MACHINE_LABELS: list[str] = [
+    "macbook", "macbookair", "macbookpro", "imac", "mac-mini", "macmini",
+    "laptop", "desktop", "thinkpad", "surface", "workstation", "ubuntu",
+    "debian", "fedora", "archlinux", "raspberrypi", "localhost", "computer",
+    "-pc", "pc-", "vm-", "-vm", "ip-", "ec2-", "runner", "codespaces"
 ];
 
 """Local parts that are structurally impersonal. If the whole local part is one
@@ -182,6 +206,21 @@ def is_deliverable(email: str) -> tuple {
     }
     if local in DEAD_LOCALPARTS {
         return (False, f"impersonal local part ({local})");
+    }
+    # A machine hostname, not a mail host. git writes <user>@<hostname> when no
+    # email is configured, and on a home network that hostname carries the
+    # router's suffix - producing an address that satisfies every RFC and
+    # reaches nobody. Observed live: brandonbennett@macbookair.myfiosgateway.com
+    for gw in GATEWAY_DOMAINS {
+        if gw and (domain.endswith("." + gw) or domain == gw or ("." + gw + ".") in ("." + domain + ".")) {
+            return (False, f"residential gateway / router hostname ({domain})");
+        }
+    }
+    first_label: str = domain.split(".")[0];
+    for mach in MACHINE_LABELS {
+        if mach in first_label {
+            return (False, f"machine hostname, not a mail host ({domain})");
+        }
     }
     if "." not in domain {
         return (False, "domain has no TLD");
