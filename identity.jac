@@ -549,35 +549,54 @@ walker:pub CrossLinkToGithub {
             }
         }
 
-        # A link the person put on their OWN LinkedIn contact card is as close
-        # to a self-declaration as this pipeline can get.
+        # A link the person put on their OWN LinkedIn contact card is the
+        # strongest signal this pipeline can get - LinkedIn renders only what
+        # they typed there themselves. But "strongest available" is not the same
+        # as "needs no check", and this branch previously returned VERIFIED at
+        # 0.97 without consulting `name_sim`, which is computed directly above
+        # it. That is the defect class we have hit three times today: a claim
+        # asserted by a path that never did the work the claim describes.
+        #
+        # It was not hypothetical. The contact-info harvest was querying
+        # `document.querySelectorAll('a[href]')` across the WHOLE PAGE rather
+        # than the modal, so a github.com link from the sidebar or a suggested-
+        # profile rail could land in the blob and inherit VERIFIED - skipping
+        # every corroboration below it, on the one prospect we email and call.
+        # JACCDP has since scoped the harvest to the dialog and made it fail
+        # closed, but the tier must not depend on a scraper staying correct.
+        # Corroborated it stays VERIFIED; uncorroborated it is still strong
+        # evidence, just not a self-certifying one.
         if where == "contact info modal" {
-            return {"matched": True, "login": login, "tier": "verified",
-                    "confidence": 0.97,
-                    "basis": f"github.com/{login} is listed on their own LinkedIn contact card"};
+            if name_sim >= 0.55 {
+                return {"matched": True, "login": login, "tier": "verified",
+                        "confidence": 0.97,
+                        "basis": f"github.com/{login} is listed on their own LinkedIn "
+                                 + f"contact card, and the GitHub identity corroborates it "
+                                 + f"(name similarity {name_sim:.2f})"};
+            }
+            if self.linkedin_company and self._org_corroborates(login) {
+                return {"matched": True, "login": login, "tier": "verified",
+                        "confidence": 0.95,
+                        "basis": f"github.com/{login} is listed on their own LinkedIn "
+                                 + f"contact card and is a verified member of a GitHub org "
+                                 + f"matching '{self.linkedin_company}'"};
+            }
+            return {"matched": True, "login": login, "tier": "probable",
+                    "confidence": 0.74,
+                    "basis": f"github.com/{login} appears in the LinkedIn contact-info "
+                             + f"panel, but nothing on the GitHub side corroborates it - "
+                             + f"display name '{gname or '(none)'}' against '{p.name}' is "
+                             + f"only {name_sim:.2f} and no shared org was verified"};
         }
 
         # Otherwise, look for a VERIFIABLE affiliation. Never trust the
         # `company` string on its own - it is user-editable free text.
-        if self.linkedin_company {
-            orgs: GhResponse = gh.user_orgs(login);
-            if orgs.ok {
-                for o in orgs.items {
-                    org_login: str = o.get("login", "") as str;
-                    if not org_login {
-                        continue;
-                    }
-                    if self._same_org(org_login, self.linkedin_company) {
-                        if gh.is_org_member(org_login, login) {
-                            return {"matched": True, "login": login, "tier": "verified",
-                                    "confidence": 0.95,
-                                    "basis": f"verified member of the {org_login} GitHub org, "
-                                             + f"which matches their LinkedIn company '{self.linkedin_company}' "
-                                             + "(org membership is verifiable; the profile company field is not)"};
-                        }
-                    }
-                }
-            }
+        if self.linkedin_company and self._org_corroborates(login) {
+            return {"matched": True, "login": login, "tier": "verified",
+                    "confidence": 0.95,
+                    "basis": f"verified member of a GitHub org matching their LinkedIn "
+                             + f"company '{self.linkedin_company}' "
+                             + "(org membership is verifiable; the profile company field is not)"};
         }
 
         if name_sim >= 0.85 {
@@ -595,6 +614,31 @@ walker:pub CrossLinkToGithub {
         return {"matched": False, "login": login,
                 "basis": f"github.com/{login} appeared in {where} but nothing corroborates "
                          + f"it being {p.name} (name similarity {name_sim:.2f}, no shared verified org)"};
+    }
+
+    """Is this login a VERIFIED member of a GitHub org matching the LinkedIn company?
+
+    Two steps, and the second is the one that matters: /users/{login}/orgs lists
+    the orgs they claim publicly, and /orgs/{org}/members/{login} returns 204
+    only if the org itself lists them. The GitHub `company` field is free text
+    anyone can type; org membership cannot be self-asserted."""
+    def _org_corroborates(login: str) -> bool {
+        orgs: GhResponse = gh.user_orgs(login);
+        if not orgs.ok {
+            return False;
+        }
+        for o in orgs.items {
+            org_login: str = o.get("login", "") as str;
+            if not org_login {
+                continue;
+            }
+            if self._same_org(org_login, self.linkedin_company) {
+                if gh.is_org_member(org_login, login) {
+                    return True;
+                }
+            }
+        }
+        return False;
     }
 
     """Loose org-name comparison. 'Acme, Inc.' on LinkedIn is 'acme' on GitHub."""

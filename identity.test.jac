@@ -337,3 +337,51 @@ test "a matching linkedin payload does populate the prospect card" {
         }
     }
 }
+
+
+# REGRESSION. The contact-info branch of CrossLinkToGithub returned VERIFIED at
+# 0.97 for any github.com link in the blob, without consulting `name_sim` -
+# which is computed on the line above it. JACCDP then found the harvest was
+# querying document.querySelectorAll('a[href]') across the WHOLE PAGE rather
+# than the modal, so a link from the sidebar or a suggested-profile rail could
+# land in that text and inherit VERIFIED, skipping every corroboration check,
+# on the one prospect we email and call.
+#
+# The harvest is scoped now and fails closed. This pins the other half: the
+# tier must not depend on a scraper staying correct. A contact-card link whose
+# GitHub side corroborates nothing is still strong evidence - it stays matched
+# and PROBABLE - but it may not certify itself as VERIFIED.
+test "a contact-card link must be corroborated to reach VERIFIED" {
+    if gh.has_token() {
+        # torvalds standing in for a stray link that a document-wide scrape
+        # could have swept into the contact-info blob.
+        stray: Prospect = (root ++> Prospect(name="Priya Raman",
+                                             handle="priya-contactinfo")) as Prospect;
+        res = stray spawn CrossLinkToGithub(
+            contact_info_text="Contact: priya@example.com · https://github.com/torvalds"
+        );
+        v = res.reports[0];
+        assert (v["tier"] as str) != "verified", "an uncorroborated contact-card link must not self-certify";
+        assert (v["confidence"] as float) < 0.8;
+        assert "nothing on the GitHub side corroborates" in (v["basis"] as str);
+    }
+}
+
+
+# The genuine case must keep its strength, or the strongest signal in the
+# cross-link becomes worthless and no Lane-A/B/C prospect reaches S-tier.
+test "a corroborated contact-card link still reaches VERIFIED" {
+    if gh.has_token() {
+        real: Prospect = (root ++> Prospect(name="Simon Willison",
+                                            handle="simonw-contactinfo")) as Prospect;
+        res = real spawn CrossLinkToGithub(
+            contact_info_text="GitHub: https://github.com/simonw",
+            linkedin_company="Datasette"
+        );
+        v = res.reports[0];
+        assert (v["matched"] as bool);
+        assert (v["tier"] as str) == "verified", f"name corroborates, must stay VERIFIED: {v['basis']}";
+        assert (v["confidence"] as float) >= 0.95;
+        assert "corroborates" in (v["basis"] as str);
+    }
+}
