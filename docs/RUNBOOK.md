@@ -161,3 +161,50 @@ Fastest fix under pressure: **have the dashboard poll `feed_since` directly and 
 - [ ] Browserbase context re-verified live (~6:30 PM per the register)
 - [ ] Dashboard shows lanes with non-empty `live_url`
 - [ ] **Hotspot tunnel proven** — `NETWORK=hotspot ops/tunnel.sh`; the register calls the hotspot PRIMARY
+
+---
+
+## The Go button, and Lane W (changed at 18:5x — read this)
+
+`POST /walker/RunResearch` used to return **HTTP 200, `[]`, and touch nothing** —
+no run, no lane, no browser, in 0.0 seconds. `RunResearch` declared only
+`can start with Founder entry`, and the HTTP route spawns on **root**, so no
+ability fired. Silent success, on the critical path.
+
+It now has a `from_root` Root entry that locates the Founder and visits it
+(same shape as `PlanCampaign`). **Lane W is now launched inside the same
+fan-out**, guarded on `TEAMMATE_LINKEDIN_URL` — previously `RunResearch` never
+referenced `LaneW` at all, so even a working button produced no Becky.
+
+**Checks after pressing it:**
+
+- [ ] The response is not `[]`. An empty report list means the Root entry has
+      been lost — that is the old silent-no-op, not "nothing to do".
+- [ ] `list_prospects` grows. **A stage reporting success without moving the
+      graph is the failure mode we hit most often today.**
+- [ ] A `W` lane appears alongside `A`/`B`/`C`/`D`. If it does not,
+      `TEAMMATE_LINKEDIN_URL` is unset and Lane W skipped itself — it will say so
+      rather than inventing a prospect.
+
+**Verify over HTTP, not `jac run`.** `jac run` writes the local root; the server
+reads the guest root. A green `jac run` proof does not tell you the button works.
+
+## `REDIS_URL`
+
+If `REDIS_URL` is set in the shell with no reachable Redis, the scale layer fails
+during init and leaves the user manager without its `_lock`. Every endpoint then
+500s while `/healthz` still returns 200.
+
+- [ ] `unset REDIS_URL` before launching, or confirm Redis is actually reachable.
+- [ ] `env | grep -i redis` — it comes from the shell environment, not from
+      `.env` or `jac.toml`, which is why editing those does not clear it.
+
+## Two things that are known and NOT worth debugging on the night
+
+- **Lanes A and C surface zero.** LinkedIn rotated the class names their
+  extractors key on. Lane A's comment path announces the miss now instead of
+  claiming "comments are closed", but the yield is still zero. B and D produce,
+  so `converged` will read 0 — that is this, not a merge bug.
+- **The warm lead has no quotable recent posts.** Her About section is the
+  citation source and it is real and verbatim. A fact about her profile, not a
+  failure to scrape.
