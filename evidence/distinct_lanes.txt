@@ -1,0 +1,35 @@
+DISTINCT LANES — three researchers, not three copies
+Captured 2026-07-26 17:55 PDT from an isolated checkout at commit eacc7ea.
+Command: jac run distinct_lanes_proof.jac
+
+This is the demo's central visual claim, and the exact thing the
+flow-in-comprehension race silently inverted — every lane ran the LAST
+spec, so all three panels showed lane C while A and B sat empty, with no
+error raised. It is now asserted in four independent ways, so a
+regression fails loudly instead of quietly showing three copies.
+
+{'run': 'a2ceb2297c484e6db5dbcec9164f8db6', 'lanes': [{'lane': 'A', 'found': 2, 'probes_run': 3, 'failure': '', 'live_url': '', 'timed_out': False}, {'lane': 'B', 'found': 1, 'probes_run': 6, 'failure': '', 'live_url': '', 'timed_out': False}, {'lane': 'C', 'found': 1, 'probes_run': 2, 'failure': '', 'live_url': '', 'timed_out': False}], 'unique_prospects': 3, 'converged': 1}
+==========================================================================
+LANE A  state=done  probes=2  reasoning=20  surfaced=['sam-oyelaran', 'dana-okafor']
+   first query : rag pipeline is a nightmare
+   opening line: Lane A. I search the phrase people actually type when they are annoyed, then I read the 
+   a judgement : Two posts back for "rag pipeline is a nightmare".
+LANE B  state=done  probes=2  reasoning=24  surfaced=['lee-park']
+   first query : we tried rag pipeline
+   opening line: Lane B. I want people who wrote the problem down themselves, in the first person, with a
+   a judgement : A single hit for "we tried rag pipeline". Thin, but worth reading.
+LANE C  state=done  probes=2  reasoning=9  surfaced=['dana-okafor']
+   first query : rag evaluation
+   opening line: Lane C. Everyone describing the same pain uses different words for it, and whichever wor
+   a judgement : A single hit for "rag evaluation". Thin, but worth reading.
+==========================================================================
+distinct query sets : yes
+concurrent pairs    : 3 of 3
+wall clock          : 1.64s
+lanes hitting budget: none
+unique prospects    : 3   converged: 1
+CONVERGED: Dana Okafor found by lanes ['A', 'C']
+==========================================================================
+DISTINCT_LANES_OK=True
+
+Suite at the same commit, isolated checkout: jac test research.jac -> 39 passed.

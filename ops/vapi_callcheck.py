@@ -229,7 +229,46 @@ def report(call: dict) -> int:
             ttfw = start(first_bot)
             ttfw_note = "from call creation - INCLUDES RINGING, not a latency figure"
 
-    # ---- turn latency: human stops -> agent starts ---------------------------
+    # ---- time to first SUBSTANTIVE answer -----------------------------------
+    # On 019fa108 the agent's first turns were an opener and two tool fillers
+    # ("Let me get that booked."), so it sounded busy without ever having said
+    # anything. This measures from the human's first words to the first bot turn
+    # that is neither the scripted opener nor a stall - i.e. the first moment
+    # she actually learns something.
+    FILLER = ("let me get that booked", "one moment", "give me a moment",
+              "booking that now", "let me check", "give me a second",
+              "bear with me", "hold on")
+
+    def is_filler(text: str) -> bool:
+        t = text.strip().lower()
+        if not t:
+            return True
+        # A turn that is ONLY filler stalls; filler followed by real content
+        # (">10 words after stripping") is a real answer with a preamble.
+        for f in FILLER:
+            if t.startswith(f) and len(t.split()) <= len(f.split()) + 3:
+                return True
+        return False
+
+    first_substantive = None
+    for i, m in enumerate(convo):
+        if m.get("role") != "bot":
+            continue
+        text = (m.get("message") or "")
+        if i == 0 and first_user is None:
+            continue  # the scripted opener, before she has said anything
+        if m is first_bot and first_user is None:
+            continue
+        if is_filler(text):
+            continue
+        first_substantive = m
+        break
+
+    ttfs = None
+    if first_substantive is not None and first_user is not None:
+        ttfs = start(first_substantive) - end(first_user)
+
+
     turns = []
     for i, m in enumerate(convo):
         if m.get("role") != "bot":
@@ -267,6 +306,11 @@ def report(call: dict) -> int:
     print(f"duration            : {call.get('endedAt') and round(float(call.get('costBreakdown', {}).get('total', 0)), 4)} USD")
     print(f"time to first word  : {ttfw:.2f}s  ({ttfw_note})" if ttfw is not None
           else "time to first word  : n/a")
+    if ttfs is not None:
+        said = (first_substantive.get("message") or "")[:60]
+        print(f"first real answer   : {ttfs:.2f}s after her first words -> {said!r}")
+    else:
+        print("first real answer   : NEVER - every bot turn was opener or filler")
     if turns:
         vals = sorted(t[0] for t in turns)
         print(f"turn latency        : n={len(vals)}  "

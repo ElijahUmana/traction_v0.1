@@ -187,7 +187,7 @@ ModuleNotFoundError: No module named 'redis'
 ```
 `RedisBackend` is an **optional cache tier in the memory hierarchy**. It is not the user manager and is not on the identity path.
 
-**Note:** `REDIS_URL` *is* set in the environment (`redis://default:…@redis-18402.c244.us-east-1-2.ec2.cloud.redislabs.com:18402`), which is why the code attempts the connection at all. Pointing at a *working* Redis would change nothing, because the Python client library is absent from the binary.
+**Note:** `REDIS_URL` *is* set in the environment (`redis://default:REDACTED@redis-18402.c244.us-east-1-2.ec2.cloud.redislabs.com:18402`), which is why the code attempts the connection at all. Pointing at a *working* Redis would change nothing, because the Python client library is absent from the binary.
 
 **(c) `JacScaleUserManager` is not constructed via a Redis fallback.** Its `postinit` branches only on `mongodb_uri` (Mongo vs SQLite identity storage). Redis is never consulted. Both branches skip `super().postinit()`, so `_lock` is missing either way.
 
