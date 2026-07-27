@@ -733,16 +733,31 @@ walker:pub CrossLinkToLinkedIn {
             );
         }
         here +>:Identity(tier=tier, basis=basis, confidence=confidence):+> prof;
-        if not here.linkedin_url {
-            here.linkedin_url = prof.url;
-        }
-        if not here.headline {
-            here.headline = prof.headline;
+
+        # A name mismatch attaches the profile for a human to adjudicate, but it
+        # must NOT promote the payload onto the Prospect itself. `linkedin_url`
+        # and `headline` are not inert storage: they flow through `to_view()`
+        # onto the dashboard card and into ComposeOutreach's inputs, so writing
+        # them here is what converts an unverified guess into a personalised
+        # email about a stranger. LinkedIn now serves no <h1>, no <main> and no
+        # .pv-top-card (JACCDP measured it), so a mis-scraped payload is a live
+        # possibility rather than a hypothetical - which is exactly when the
+        # cautious branch has to actually be cautious.
+        if name_ok {
+            if not here.linkedin_url {
+                here.linkedin_url = prof.url;
+            }
+            if not here.headline {
+                here.headline = prof.headline;
+            }
         }
         self.linked += 1;
-        report {"handle": here.handle, "matched": True, "url": prof.url,
+        # `matched` follows the comparison too. A ledger that reads matched=True
+        # on a name mismatch is the same defect one field over.
+        report {"handle": here.handle, "matched": name_ok, "url": prof.url,
                 "headline": prof.headline, "tier": str(tier),
-                "confidence": confidence, "basis": basis};
+                "confidence": confidence, "basis": basis,
+                "promoted_to_prospect": name_ok};
     }
 
     """Do two names refer to the same human?

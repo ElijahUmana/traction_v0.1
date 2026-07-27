@@ -249,3 +249,91 @@ test "a contact-card github link resolves to a verified identity" {
         assert linked[0].login == "simonw";
     }
 }
+
+
+# REGRESSION. CrossLinkToLinkedIn used to assert IdentityTier.PROBABLE at 0.72
+# with a basis reading "matched on name" while nothing in that path compared a
+# name (found by architect; tier logic fixed by jaccdp). This pins the half that
+# matters most: on a name MISMATCH the harvested payload must not be promoted
+# onto the Prospect. `linkedin_url` and `headline` are not inert - they flow
+# through to_view() onto the dashboard card and into ComposeOutreach's inputs,
+# so promoting them is what turns an unverified guess into a personalised email
+# about a stranger. LinkedIn now serves no <h1>/<main>/.pv-top-card, so a
+# mis-scraped payload is a live possibility, not a hypothetical.
+test "a mismatched linkedin payload never reaches the prospect card" {
+    f: Founder = (root ++> Founder(name="F5", email="f5@x.io")) as Founder;
+    run: ResearchRun = (f +>:Runs(created_at=1.0):+> ResearchRun(started_at=1.0)) as ResearchRun;
+    lane: Lane = (run +>:HasLane(launched_at=1.0):+> Lane(lane_id=LaneId.D)) as Lane;
+
+    p: Prospect = Prospect(name="Ada Lovelace", handle="adalovelace",
+                           email="ada@real.dev", email_confidence=0.9);
+    lane +>:Surfaced(at_rank=0, found_at=1.0, query="q"):+> p;
+    gp: GithubProfile = GithubProfile(login="adalovelace", url="https://github.com/adalovelace");
+    p +>:Identity(tier=IdentityTier.VERIFIED, basis="lane D", confidence=1.0):+> gp;
+
+    wrong: dict[str, any] = {
+        "url": "https://linkedin.com/in/charles-babbage",
+        "handle": "charles-babbage", "name": "Charles Babbage",
+        "headline": "Inventor of the Difference Engine", "company": "Analytical Co",
+        "about": "Not Ada."
+    };
+    res = root spawn CrossLinkToLinkedIn(limit=99, harvested={"adalovelace": wrong});
+    # limit=2 made this test vacuous: the walker ranks every prospect in the
+    # shared root by score and visits the top N, so it could pass by never
+    # having visited Ada at all. Assert it actually ran on her.
+    saw: bool = False;
+    for v in res.reports {
+        if (v.get("handle", "") as str) == "adalovelace" { saw = True; }
+    }
+    assert saw, "the walker must actually have visited this prospect";
+
+    assert p.headline == "", "a stranger's headline must not land on the prospect card";
+    assert p.linkedin_url == "", "a stranger's profile URL must not land on the prospect";
+    for v in res.reports {
+        if (v.get("handle", "") as str) == "adalovelace" {
+            assert not (v.get("matched", True) as bool), "the ledger must not read matched=True on a name mismatch";
+            assert (v.get("confidence", 1.0) as float) <= 0.5;
+            assert "does not match" in (v.get("basis", "") as str);
+        }
+    }
+}
+
+
+# The other direction: a genuine match SHOULD promote, or the light pass does
+# nothing useful and Lane D prospects can never reach S-tier.
+test "a matching linkedin payload does populate the prospect card" {
+    f: Founder = (root ++> Founder(name="F6", email="f6@x.io")) as Founder;
+    run: ResearchRun = (f +>:Runs(created_at=1.0):+> ResearchRun(started_at=1.0)) as ResearchRun;
+    lane: Lane = (run +>:HasLane(launched_at=1.0):+> Lane(lane_id=LaneId.D)) as Lane;
+
+    p: Prospect = Prospect(name="Grace Hopper", handle="gracehopper",
+                           email="grace@real.dev", email_confidence=0.9,
+                           company="Univac");
+    lane +>:Surfaced(at_rank=0, found_at=1.0, query="q"):+> p;
+    gp: GithubProfile = GithubProfile(login="gracehopper", url="https://github.com/gracehopper");
+    p +>:Identity(tier=IdentityTier.VERIFIED, basis="lane D", confidence=1.0):+> gp;
+
+    right: dict[str, any] = {
+        "url": "https://linkedin.com/in/grace-hopper",
+        "handle": "gracehopper", "name": "Grace Hopper",
+        "headline": "Rear Admiral, compiler pioneer", "company": "Univac Corporation",
+        "about": "I invented the compiler. Then I documented it."
+    };
+    res = root spawn CrossLinkToLinkedIn(limit=99, harvested={"gracehopper": right});
+    saw2: bool = False;
+    for v in res.reports {
+        if (v.get("handle", "") as str) == "gracehopper" { saw2 = True; }
+    }
+    assert saw2, "the walker must actually have visited this prospect";
+
+    assert p.headline == "Rear Admiral, compiler pioneer";
+    assert p.linkedin_url == "https://linkedin.com/in/grace-hopper";
+    linked: list[LinkedinProfile] = [p ->:Identity:-> [?:LinkedinProfile]];
+    assert len(linked) == 1;
+    for v in res.reports {
+        if (v.get("handle", "") as str) == "gracehopper" {
+            assert (v.get("matched", False) as bool);
+            assert (v.get("confidence", 0.0) as float) >= 0.7, "name + company should corroborate to PROBABLE";
+        }
+    }
+}

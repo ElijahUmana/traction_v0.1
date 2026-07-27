@@ -86,14 +86,21 @@ glob GATEWAY_DOMAINS: list[str] = [
     "in-addr", "broadband", "dynamic", "localdomain"
 ];
 
-"""Hostname fragments that mark the left-hand label as a MACHINE, not a mail
+"""Whole TOKENS that mark the leftmost DNS label as a MACHINE rather than a mail
 host. `macbookair.myfiosgateway.com` is caught by the gateway list; a corporate
-`jsmith@Johns-MacBook-Pro.company.com` is caught here."""
+`jsmith@Johns-MacBook-Pro.company.com` is caught here.
+
+Matched as exact tokens after splitting the label on separators and digits, NOT
+as substrings. Substring matching looked fine and rejected `desktopmetal.com`
+(a real public company), `laptopmag.co.uk` and `runnerstore.com` - real
+businesses whose names merely contain "desktop", "laptop" and "runner". That is
+the same silent-funnel-starvation failure in the opposite direction: a guard
+against undeliverable addresses that quietly discards deliverable ones."""
 glob MACHINE_LABELS: list[str] = [
-    "macbook", "macbookair", "macbookpro", "imac", "mac-mini", "macmini",
-    "laptop", "desktop", "thinkpad", "surface", "workstation", "ubuntu",
-    "debian", "fedora", "archlinux", "raspberrypi", "localhost", "computer",
-    "-pc", "pc-", "vm-", "-vm", "ip-", "ec2-", "runner", "codespaces"
+    "macbook", "macbookair", "macbookpro", "mbp", "imac", "macmini", "mac",
+    "laptop", "desktop", "thinkpad", "workstation", "ubuntu", "debian",
+    "fedora", "archlinux", "raspberrypi", "localhost", "pc", "vm", "ip",
+    "ec2", "runner", "codespaces", "devbox", "vagrant", "docker"
 ];
 
 """Local parts that are structurally impersonal. If the whole local part is one
@@ -216,9 +223,14 @@ def is_deliverable(email: str) -> tuple {
             return (False, f"residential gateway / router hostname ({domain})");
         }
     }
+    # Exact-token match on the leftmost label. Splitting on separators AND
+    # digits turns "Johns-MacBook-Pro" into [johns, macbook, pro] and
+    # "ip-172-31-0-42" into [ip], while leaving "desktopmetal" as one token that
+    # matches nothing.
     first_label: str = domain.split(".")[0];
+    tokens: list[str] = [t for t in re.split("[^a-z]+", first_label.lower()) if t];
     for mach in MACHINE_LABELS {
-        if mach in first_label {
+        if mach in tokens {
             return (False, f"machine hostname, not a mail host ({domain})");
         }
     }
