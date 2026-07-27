@@ -31,10 +31,43 @@
 
 Independently proven and detailed below: the pure-Jac browser stack (§1), Lane D and the email gate (§2), the dashboard feed (§3), the conversion loop and Vapi (§6).
 
+### The chain HAS now been joined in-process — and the evidence gate fired
+
+`evidence/chain_join_composeoutreach.txt`. Run in an isolated checkout (`git clone` to /tmp
+with `.env` copied) to escape the shared-store contention described in §13:
+
+```
+[A after Lane W] founders=1 prospects=1 evidence=2 identities=1 threads=0
+    prospect: Becky Zhu | tier A | email xingzhizhu6@gmail.com | provided
+=== ComposeOutreach on Lane W's REAL prospect ===
+refused: True
+reason : "the LinkedIn quote from the graph does not appear verbatim in the drafted body"
+drafted body cited: "My fields of interest are analytics and product management."
+[B after compose] threads=0     <- refusal is clean, no partial EmailThread
+```
+
+**Lane W's live research reached `ComposeOutreach` and the anti-hallucination gate
+refused to send.** Two readings, unresolved at the time of writing and owned by OUTREACH:
+
+1. **The gate worked.** The LLM invented a plausible sentence not present in the stored
+   Evidence, and `quote_is_grounded`'s 8-word verbatim run caught it. If so this is a
+   *stronger* demo beat than a successful send: the system refused to email someone
+   because it could not prove the quote was hers.
+2. **The gate is over-strict.** The phrase is in her real About, but the stored Evidence
+   holds a truncated copy — `about_text` was measured varying **849 → 156 chars between
+   runs** because LinkedIn truncates behind "see more" (§1). A genuinely grounded quote
+   would then fail against the shorter stored node.
+
+Settled by inspecting whether the full stored About contains that sentence. **Either way the
+demo's critical path currently produces no email**, so it is tracked as open.
+
 ### NOT verified — stated plainly
 
-- **The joined-up HTTP chain.** `PlanCampaign → RunResearch → gate → ComposeOutreach` has never completed as one continuous run.
-- **`ComposeOutreach` on Lane W's real prospect.** Composed output is proven on a seeded prospect (§6); it has not been run on the live Lane W node.
+- **The joined-up chain driven over HTTP.** It has now run **in-process** (above); it has
+  never run through the server, because of the defect below.
+- **A successful send on the live Lane W node.** Composition reached the gate and was
+  refused; `SendOutreach` was deliberately not run (a live call to the same human was in
+  progress).
 - **Two walkers are unreachable over HTTP** — see §12.
 
 ### ⚠️ OPEN DEFECT — the server (owner: SERVERFIX)

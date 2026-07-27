@@ -1,0 +1,24 @@
+WARNING - Redis connection failed: 'NoneType' object has no attribute 'from_url'
+[A after Lane W] founders=1 prospects=1 evidence=2 identities=1 threads=0
+    prospect: Becky Zhu | tier A | email xingzhizhu6@gmail.com | provided
+       evidence: headline | Program Manager @Oracle | UCLA Business Economics & Statistics and Dat
+       evidence: about | Hi, this is Xingzhi (Becky) Zhu, UCLA alum double majoring in Business
+
+=== ComposeOutreach on Lane W's REAL prospect ===
+{'ok': False, 'refused': True, 'prospect': 'Becky Zhu', 'prospect_id': 'c989b07472394407aedca773a30f685b', 'reason': 'refusing to send an ungrounded draft: the LinkedIn quote from the graph does not appear verbatim in the drafted body (expected to find: Hi, this is Xingzhi (Becky) Zhu, UCLA alum double majoring i)', 'source': 'llm', 'subject': 'Analytics meets founder sales research, Becky', 'body': 'Becky,\n\nIn your LinkedIn About section you wrote: "My fields of interest are analytics and product management." That intersection — pulling signal from messy data to make a decision — is exactly where founder-led sales research breaks down. Hours of tab-switching, copy-pasting, losing context.\n\nPure-Jac automates browser-based research for founders doing their own outbound, so the analytical layer is handled before the first call.\n\nWould you have 15 minutes to share how you see that research-to-decision gap from the PM side?\n\nElijah Umana'}
+    refused     : True
+    addressed_as: 
+    subject     : Analytics meets founder sales research, Becky
+    cited       : 
+    body:
+Becky,
+
+In your LinkedIn About section you wrote: "My fields of interest are analytics and product management." That intersection — pulling signal from messy data to make a decision — is exactly where founder-led sales research breaks down. Hours of tab-switching, copy-pasting, losing context.
+
+Pure-Jac automates browser-based research for founders doing their own outbound, so the analytical layer is handled before the first call.
+
+Would you have 15 minutes to share how you see that research-to-decision gap from the PM side?
+
+Elijah Umana
+
+[B after compose] founders=1 prospects=1 evidence=2 identities=1 threads=0
