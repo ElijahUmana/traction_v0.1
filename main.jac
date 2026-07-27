@@ -128,7 +128,13 @@ def:pub graph_health -> dict[str, int] {
             if p.is_converged() {
                 converged += 1;
             }
-            if p.tier == CompletenessTier.DROPPED {
+            # Compare against the literal, not the enum member. CompletenessTier
+            # is str-backed so these are equal - but resolving the symbol here
+            # made graph_health 500 with "name 'CompletenessTier' is not defined"
+            # when a new module joined main.jac's import registry and shifted
+            # init order. jac check stayed green throughout; it is a runtime
+            # resolution failure, not a type error. The literal cannot break.
+            if p.tier == "DROPPED" {
                 dropped += 1;
             }
         }

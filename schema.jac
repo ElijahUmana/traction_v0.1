@@ -67,6 +67,7 @@ node ICP {
     has keywords: list[str] = [];
     has negative_keywords: list[str] = [];
     has pain_phrases: list[str] = [];
+    has founder_note: str = "";
 }
 
 node ResearchRun {
@@ -87,6 +88,11 @@ node Lane {
     has keywords: list[str] = [];
     has current_query: str = "";
     has query_index: int = 0;
+    # Founder review: a persona the founder deselected stays on the graph with
+    # approved=False rather than being deleted, so the ledger can show what was
+    # rejected and why the survivors were kept. Defaults True so every existing
+    # lane and every code path that predates the review step is unaffected.
+    has approved: bool = True;
 
     def narrate(sentence: str, kind: ReasoningKind, t: float) -> Reasoning;
     def open_probe(keywords: str, date_posted: str) -> SearchProbe;
