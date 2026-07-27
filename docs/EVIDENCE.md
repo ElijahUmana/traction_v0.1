@@ -31,35 +31,52 @@
 
 Independently proven and detailed below: the pure-Jac browser stack (§1), Lane D and the email gate (§2), the dashboard feed (§3), the conversion loop and Vapi (§6).
 
-### The chain HAS now been joined in-process — and the evidence gate fired
+### The chain IS joined in-process — and the grounding gate has a BUG
 
-`evidence/chain_join_composeoutreach.txt`. Run in an isolated checkout (`git clone` to /tmp
-with `.env` copied) to escape the shared-store contention described in §13:
+`evidence/chain_join_composeoutreach.txt`. Run as sole operator in an isolated checkout
+(`git clone` to /tmp with `.env` copied) to escape the shared-store contention of §13.
 
 ```
 [A after Lane W] founders=1 prospects=1 evidence=2 identities=1 threads=0
     prospect: Becky Zhu | tier A | email xingzhizhu6@gmail.com | provided
-=== ComposeOutreach on Lane W's REAL prospect ===
+=== ComposeOutreach (compose only) ===
 refused: True
-reason : "the LinkedIn quote from the graph does not appear verbatim in the drafted body"
-drafted body cited: "My fields of interest are analytics and product management."
-[B after compose] threads=0     <- refusal is clean, no partial EmailThread
 ```
 
-**Lane W's live research reached `ComposeOutreach` and the anti-hallucination gate
-refused to send.** Two readings, unresolved at the time of writing and owned by OUTREACH:
+**Lane W's live LinkedIn research reached `ComposeOutreach`.** The composed email is good —
+opens `Becky,` (her preferred name, not `Xingzhi`), cites her real About text, one line of
+product, asks for fifteen minutes. It was then **refused, incorrectly**.
 
-1. **The gate worked.** The LLM invented a plausible sentence not present in the stored
-   Evidence, and `quote_is_grounded`'s 8-word verbatim run caught it. If so this is a
-   *stronger* demo beat than a successful send: the system refused to email someone
-   because it could not prove the quote was hers.
-2. **The gate is over-strict.** The phrase is in her real About, but the stored Evidence
-   holds a truncated copy — `about_text` was measured varying **849 → 156 chars between
-   runs** because LinkedIn truncates behind "see more" (§1). A genuinely grounded quote
-   would then fail against the shorter stored node.
+**Adjudicated, not guessed.** Dumping the stored evidence beside the drafted body and
+running an independent 8-word-run check:
 
-Settled by inspecting whether the full stored About contains that sentence. **Either way the
-demo's critical path currently produces no email**, so it is tracked as open.
+```
+STORED about evidence (156 chars):
+  "Hi, this is Xingzhi (Becky) Zhu, UCLA alum double majoring in Business
+   Economics and Statistics. My fields of interest are analytics and product management."
+DRAFTED body cites:
+  "My fields of interest are analytics and product management."
+INDEPENDENT CHECK:
+  about: 8-word run present in body?  TRUE
+         -> 'my fields of interest are analytics and product'
+GATE VERDICT: refused
+```
+
+The quote is verbatim, it came from the stored node, and an 8-word verbatim run is present —
+which is `quote_is_grounded`'s **own documented criterion**. It refused anyway, so
+`longest_verbatim_run` / `normalize` is not applying the rule the gate documents. The
+independent check used plain `.lower()`; the gate uses `normalize()`, and the drafted body
+wraps the citation in **typographic quotes** with an em dash following — the likeliest
+place the run breaks.
+
+**This is a bug, not the gate working.** An earlier revision of this file offered two
+readings; that framing is withdrawn — it is settled. Owner: OUTREACH. Consequence: on the
+demo's critical path, with the real on-stage prospect, a correctly grounded and correctly
+addressed email is refused and no `EmailThread` is written.
+
+**The gate itself should not be loosened.** Refusing ungrounded drafts is one of the
+strongest properties in this product; it only needs to compare the two strings on equal
+terms.
 
 ### NOT verified — stated plainly
 
