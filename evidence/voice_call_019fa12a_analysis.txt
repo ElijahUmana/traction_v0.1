@@ -1,0 +1,51 @@
+
+========================================================================
+TRANSCRIPT (t = seconds from call start)
+========================================================================
+[  1.53] bot              Hi, Becky. This is an AI assistant. Calling on behalf of Elijah Umana. You replied to our email a moment ago. Is now still a good time?
+[  9.80] user             Yeah. Yeah. Yeah.
+[ 13.18] bot              Becky, I noticed your interest in analytics and product management. From UCLA and Oracle. Elijah built a tool that helps with those areas. When can we schedule 
+[ 23.32] user             How does this help me, though?
+[ 24.71] tool_calls       CALL answer_from_graph({"question": "How does this help me, though?"})
+[ 25.07] tool_call_result RESULT The person on this call is Becky. Address them as Becky, never by any other form of their name. Their headline reads: Program Manager @Oracle | UCLA Busi
+[ 26.99] bot              Becky? Elijah's tool, is designed to streamline analytics and product management workflows. Which matches your interest and role at Oracle perfectly.
+[ 36.35] user             Okay.
+[ 36.64] bot              When can we set a time to discuss?
+[ 37.08] user             Let's let's do Monday at 5PM.
+[ 41.20] tool_calls       CALL book_interview({
+  "start_time": "2026-07-27T17:00:00-07:00",
+  "spoken_time": "Monday at 5PM",
+  "duration_minutes": 30
+})
+[ 41.62] bot              Let me get that booked.
+[ 42.60] tool_call_result RESULT Booked for Monday, July 27th at 5 PM Pacific. The invite is on its way to xingzhizhu6@gmail.com now, with a Google Meet link.
+[ 44.05] user             Okay.
+[ 44.41] tool_calls       CALL endCall({})
+[ 45.79] bot              Thanks so much for your time. Speak soon.
+[ 47.08] tool_call_result RESULT Success.
+
+========================================================================
+MEASUREMENTS
+========================================================================
+ended reason        : assistant-ended-call
+duration            : 0.0723 USD
+time to first word  : 1.53s  (from call creation - INCLUDES RINGING, not a latency figure)
+first real answer   : 2.66s after she finished -> 'Becky, I noticed your interest in analytics and product mana'
+turn latency        : n=4  min 1.26s  median 2.23s  max 2.66s
+     2.66s  after human said: 'Yeah. Yeah. Yeah.'  <-- SLOW
+     2.23s  after human said: 'How does this help me, though?'  <-- SLOW
+     2.14s  after human said: "Let's let's do Monday at 5PM."  <-- SLOW
+     1.26s  after human said: 'Okay.'
+barge-in overlaps   : 1
+    human cut in at 37.08s, 1.48s before agent would have finished: 'When can we set a time to discuss?'
+tool calls          : ['answer_from_graph', 'book_interview', 'endCall']
+    result: The person on this call is Becky. Address them as Becky, never by any other form of their name. Their headline reads: Program Manager @Oracle | UCLA Business Ec
+    result: Booked for Monday, July 27th at 5 PM Pacific. The invite is on its way to xingzhizhu6@gmail.com now, with a Google Meet link.
+    result: Success.
+
+========================================================================
+VERDICT
+========================================================================
+  FAIL  median turn latency 2.23s (target <= 2.0s)
+  PASS  the agent invoked 3 tool(s): ['answer_from_graph', 'book_interview', 'endCall']
+  INFO  1 barge-in(s) captured

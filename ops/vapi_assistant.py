@@ -223,12 +223,27 @@ def target() -> dict:
                 "waitFunction": "20 + 250 * sqrt(x) + 1200 * x^3",
             },
         },
-        # Barge-in. numWords 0 means voice activity alone stops the agent, rather
-        # than waiting for two words to be transcribed first - the difference
-        # between an agent that yields and one that talks through you.
+        # Barge-in. numWords 0 means pure voice-activity detection, and on a real
+        # phone line that was a disaster: ANY 0.3s of sound stops the agent -
+        # breathing, rustling, street noise, line artefacts - and because none of
+        # that is transcribable it never appears in the transcript, so the agent
+        # just went mute for no visible reason.
+        #
+        # Call 019fa115 proves it. The opening line was protected by
+        # firstMessageInterruptionsEnabled=False and ran its full 7.36s / 27
+        # words. Every unprotected turn after it was cut to a fragment:
+        #   "Becky, I noticed your"  - 1.44s, then THIRTEEN SECONDS of dead air
+        #   "Becky, I'm call"        - 0.80s, cut mid-word
+        # and the human said nothing at all between 10.44s and 26.93s. Nothing
+        # she did caused that first cut. Noise did.
+        #
+        # numWords 2 switches interruption to the TRANSCRIPT: the agent yields
+        # only once the transcriber has produced two real words. Noise cannot
+        # produce words, so it can no longer silence the agent, while a human
+        # who actually starts talking still cuts in almost as fast.
         "stopSpeakingPlan": {
-            "numWords": 0,
-            "voiceSeconds": 0.3,
+            "numWords": 2,
+            "voiceSeconds": 0.2,
             "backoffSeconds": 1.0,
         },
         # The previous call reached a full mailbox and monologued at it. Detection

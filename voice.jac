@@ -17,6 +17,7 @@ dossier is flattened into a string at schedule time and read back verbatim.
 """
 
 import time;
+import json;
 import from datetime { datetime, timedelta, timezone }
 
 import from contracts { CallOutcome, LaneId }
@@ -265,7 +266,7 @@ def midcall_tools -> list[dict] {
                     )
                 }
             ],
-            "server": {"url": public_url_for("/walker/BookInterview"), "timeoutSeconds": 25}
+            "server": {"url": public_url_for("/vapi/book"), "timeoutSeconds": 25}
         },
         {
             "type": "function",
@@ -289,7 +290,15 @@ def midcall_tools -> list[dict] {
                     "required": ["question"]
                 }
             },
-            "server": {"url": public_url_for("/walker/KbQuery"), "timeoutSeconds": 10}
+            # An EMPTY request-start on purpose. With no messages block at all,
+            # Vapi invents its own stall line - on call 019fa115 it said "Hold on
+            # a sec." before an answer that was already sitting in memory. The
+            # graph lookup returns in 10.7ms locally and 0.43s through the
+            # tunnel, so there is nothing to fill; the filler was pure added
+            # latency and made the agent sound like it was struggling. Verified
+            # against Vapi's validator that an empty content string is accepted.
+            "messages": [{"type": "request-start", "content": ""}],
+            "server": {"url": public_url_for("/vapi/kb"), "timeoutSeconds": 10}
         }
     ];
 }
@@ -383,8 +392,8 @@ async walker:pub ScheduleCall(ProspectLookup) {
                 "earliest_at": earliest,
                 "dossier_chars": len(dossier),
                 "tool_urls": [
-                    public_url_for("/walker/KbQuery"),
-                    public_url_for("/walker/BookInterview")
+                    public_url_for("/vapi/kb"),
+                    public_url_for("/vapi/book")
                 ],
                 "server_url": public_url_for("/walker/OnCallEnd"),
                 "payload": payload
@@ -418,8 +427,8 @@ async walker:pub ScheduleCall(ProspectLookup) {
             "earliest_at": earliest,
             "call_session_jid": jid(session),
             "dossier_chars": len(dossier),
-            "kb_endpoint": public_url_for("/walker/KbQuery"),
-            "book_endpoint": public_url_for("/walker/BookInterview")
+            "kb_endpoint": public_url_for("/vapi/kb"),
+            "book_endpoint": public_url_for("/vapi/book")
         };
         disengage;
     }
@@ -490,6 +499,58 @@ def call_id_from(message: dict, fallback: str) -> str {
 }
 
 
+"""Extract the tool call from whichever key Vapi actually used.
+
+Vapi sends the invocation under `toolCallList` in some payloads and `toolCalls`
+in others, and which one arrives is not ours to choose. Reading only
+`toolCallList` is how a live call produced an EMPTY toolCallId and an EMPTY
+question: the wire carried `toolCalls`, every field silently defaulted, and the
+endpoint returned 200 with an empty answer. Nothing errored, which is the worst
+kind of failure because it looks like success. The earlier envelope proof passed
+for exactly this reason - it fed the shape this code expected instead of the
+shape Vapi sends.
+"""
+def first_tool_call(message: dict) -> dict {
+    for key in ["toolCallList", "toolCalls", "tool_calls"] {
+        raw: list = message.get(key, []) as list;
+        if raw {
+            entry: dict = raw[0] as dict;
+            return entry;
+        }
+    }
+    empty: dict = {};
+    return empty;
+}
+
+
+"""Tool arguments, whether Vapi sent them as an object or a JSON-encoded string."""
+def tool_arguments(call: dict) -> dict {
+    fn: dict = call.get("function", {}) as dict;
+    raw = fn.get("arguments", {});
+    if isinstance(raw, str) {
+        text: str = raw as str;
+        if not text.strip() {
+            blank: dict = {};
+            return blank;
+        }
+        try {
+            parsed = json.loads(text);
+        } except Exception {
+            bad: dict = {};
+            return bad;
+        }
+        if isinstance(parsed, dict) {
+            ok: dict = parsed as dict;
+            return ok;
+        }
+        other: dict = {};
+        return other;
+    }
+    direct: dict = raw as dict;
+    return direct;
+}
+
+
 """Answer a mid-call question straight from the graph. No network, no LLM.
 
 Responds in both the tool shape (`results`) and the custom-knowledge-base shape
@@ -510,12 +571,10 @@ walker:pub KbQuery {
 
         if self.message {
             vapi_call = call_id_from(self.message, self.call_id);
-            tool_calls: list = self.message.get("toolCallList", []) as list;
-            if tool_calls {
-                first: dict = tool_calls[0] as dict;
-                tool_call_id = str(first.get("id", ""));
-                fn: dict = first.get("function", {}) as dict;
-                args: dict = fn.get("arguments", {}) as dict;
+            call: dict = first_tool_call(self.message);
+            if call {
+                tool_call_id = str(call.get("id", ""));
+                args: dict = tool_arguments(call);
                 if not asked {
                     asked = str(args.get("question", ""));
                 }
@@ -598,12 +657,10 @@ async walker:pub BookInterview {
 
         if self.message {
             vapi_call = call_id_from(self.message, self.call_id);
-            tool_calls: list = self.message.get("toolCallList", []) as list;
-            if tool_calls {
-                first: dict = tool_calls[0] as dict;
-                tool_call_id = str(first.get("id", ""));
-                fn: dict = first.get("function", {}) as dict;
-                args: dict = fn.get("arguments", {}) as dict;
+            call: dict = first_tool_call(self.message);
+            if call {
+                tool_call_id = str(call.get("id", ""));
+                args: dict = tool_arguments(call);
                 if not start {
                     start = str(args.get("start_time", ""));
                 }
@@ -889,4 +946,91 @@ walker:pub OnCallEnd {
         };
         disengage;
     }
+}
+
+
+# ===========================================================================
+# VAPI TOOL ADAPTERS - the only endpoints that may emit a raw body
+# ===========================================================================
+# Vapi reads `results` at the TOP LEVEL of the response body. Every walker and
+# function response is normally wrapped in Jac's transport envelope, which
+# buries our correctly-formed results array at data.reports[0].results where
+# Vapi never looks - so it reports "no result returned" and the agent
+# improvises, which on a live call meant asserting a booking that never
+# happened.
+#
+# `@restspec(envelope=False, produces=...)` is the escape hatch, and it exists
+# ONLY on the function endpoint path - the walker builder does not honour it.
+# So these are thin `def:pub` adapters: they parse Vapi's payload, spawn the
+# existing walker to do the actual graph traversal, and return the exact bytes
+# Vapi expects. The walkers keep the logic and keep walking; these own nothing
+# but the wire format.
+
+import from http { HTTPMethod }
+
+
+"""Pull the spoken answer out of whatever KbQuery reported."""
+def _kb_answer(reports: list) -> str {
+    if not reports {
+        return "";
+    }
+    first: dict = reports[0] as dict;
+    results: list = first.get("results", []) as list;
+    if results {
+        entry: dict = results[0] as dict;
+        return str(entry.get("result", ""));
+    }
+    return "";
+}
+
+
+"""Mid-call question -> a raw Vapi tool result, answered from the graph."""
+@restspec(method=HTTPMethod.POST, path="/vapi/kb", produces="application/json", envelope=False)
+def:pub vapi_kb(message: dict = {}, call: dict = {}) -> dict {
+    tool_call = first_tool_call(message);
+    tool_call_id = str(tool_call.get("id", ""));
+    args = tool_arguments(tool_call);
+    question = str(args.get("question", ""));
+
+    outer: dict = message.get("call", {}) as dict;
+    call_id = str(outer.get("id", ""));
+    if not call_id {
+        call_id = str(call.get("id", ""));
+    }
+
+    spawned = root spawn KbQuery(question=question, call_id=call_id);
+    answer = _kb_answer(spawned.reports);
+    if not answer {
+        answer = "No research is on file for this call, so nothing specific can be claimed about this person.";
+    }
+    return {"results": [{"toolCallId": tool_call_id, "result": answer}]};
+}
+
+
+"""Mid-call booking -> a raw Vapi tool result, after really creating the event."""
+@restspec(method=HTTPMethod.POST, path="/vapi/book", produces="application/json", envelope=False)
+async def:pub vapi_book(message: dict = {}, call: dict = {}) -> dict {
+    tool_call = first_tool_call(message);
+    tool_call_id = str(tool_call.get("id", ""));
+
+    outer: dict = message.get("call", {}) as dict;
+    call_id = str(outer.get("id", ""));
+    if not call_id {
+        call_id = str(call.get("id", ""));
+    }
+
+    spoken = "";
+    try {
+        spawned = await (root spawn BookInterview(message=message, call_id=call_id));
+        spoken = _kb_answer(spawned.reports);
+    } except Exception as e {
+        # Vapi must hear WHY, so the agent can ask her to repeat the time
+        # instead of silently claiming success - the exact failure that put a
+        # wrong invite on a real calendar.
+        spoken = f"The booking did not go through: {str(e)[:160]}";
+    }
+    if not spoken {
+        spoken = "The booking did not go through, so no invite was sent.";
+    }
+    return {"results": [{"toolCallId": tool_call_id, "result": spoken}]};
 }

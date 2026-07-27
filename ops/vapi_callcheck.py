@@ -21,6 +21,7 @@ command line.
 """
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -184,6 +185,49 @@ def wait(call_id: str, limit: int = 420) -> dict:
             return api("GET", f"/call/{call_id}")
         time.sleep(3)
     raise SystemExit("call did not end within the limit")
+
+
+def redact(obj):
+    """Strip provider secrets and PII from a Vapi call dump before it touches disk.
+
+    A raw call object carries the Twilio Account SID that owns the number, and
+    GitHub's push protection correctly blocks a branch that contains one - which
+    is exactly what happened when call 019fa115's artifact was committed
+    unredacted, taking the whole branch down with it. Redaction belongs at write
+    time, not in a reviewer's memory, so every persisted artifact goes through
+    here and there is no path that writes a raw dump.
+
+    What is kept: everything the analysis needs - timings, transcript, tool
+    calls, results. Redaction only touches credentials and personal numbers.
+    """
+    SECRET_KEY = re.compile(
+        r"(sid|secret|token|apikey|api_key|password|credential|authorization)",
+        re.I,
+    )
+    # Twilio account/service SIDs and API keys: two letters then 32 hex.
+    SID = re.compile(r"\b(AC|SK|PN|AP|MG|IS)[0-9a-fA-F]{32}\b")
+
+    def scrub(o, key=""):
+        if isinstance(o, dict):
+            return {k: scrub(v, k) for k, v in o.items()}
+        if isinstance(o, list):
+            return [scrub(v, key) for v in o]
+        if isinstance(o, str):
+            if SECRET_KEY.search(key or ""):
+                return "[REDACTED]"
+            out = SID.sub("[REDACTED-SID]", o)
+            # Keep the last four digits: enough to tell two calls apart, not
+            # enough to be a phone number.
+            out = re.sub(r"\+\d{6,}(\d{4})\b", r"+[REDACTED]\1", out)
+            return out
+        return o
+
+    return scrub(obj)
+
+
+def save(call: dict, path: str) -> None:
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump(redact(call), fh, indent=2)
 
 
 def report(call: dict) -> int:
@@ -375,8 +419,7 @@ def main() -> int:
     call = wait(call_id)
     path = os.path.join(ROOT, "evidence", f"voice_call_{call_id[:8]}.json")
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "w", encoding="utf-8") as fh:
-        json.dump(call, fh, indent=2)
+    save(call, path)
     rc = report(call)
     print(f"\nfull artifact: {path}")
     return rc

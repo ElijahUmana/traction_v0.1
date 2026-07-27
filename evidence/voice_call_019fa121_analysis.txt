@@ -1,0 +1,38 @@
+
+========================================================================
+TRANSCRIPT (t = seconds from call start)
+========================================================================
+[  1.31] bot              Hi, Becky. This is an AI assistant. Calling on behalf of Elijah Umana. You replied to our email a moment ago. Is now still a good time?
+[ 10.12] user             Yeah.
+[ 13.09] bot              Becky, I'm reaching out because you know, your background in in business economics and data science at UCLA plus your role at Oracle. Aligns with what Elijah is
+[ 29.59] user             Can we do Sunday at 1PM?
+[ 32.06] tool_calls       CALL book_interview({
+  "spoken_time": "Sunday at 1PM",
+  "duration_minutes": 30
+})
+[ 33.34] bot              Let me get that booked.
+[ 33.47] tool_call_result RESULT Booked for Sunday, August 2nd at 1 PM Pacific. The invite is on its way to xingzhizhu6@gmail.com now, with a Google Meet link.
+[ 35.64] bot              Becky, I booked you for Sunday, August 2 at 1PM Pacific. The invite with a Google Meet link is on its way to your email. Thanks. And goodbye.
+[ 45.61] user             Alright. Thank you.
+
+========================================================================
+MEASUREMENTS
+========================================================================
+ended reason        : assistant-said-end-call-phrase
+duration            : 0.0686 USD
+time to first word  : 1.31s  (from call creation - INCLUDES RINGING, not a latency figure)
+first real answer   : 2.57s after she finished -> "Becky, I'm reaching out because you know, your background in"
+turn latency        : n=3  min 1.27s  median 2.57s  max 3.57s
+     2.57s  after human said: 'Yeah.'  <-- SLOW
+     1.27s  after human said: 'Can we do Sunday at 1PM?'
+     3.57s  after human said: 'Can we do Sunday at 1PM?'  <-- SLOW
+barge-in overlaps   : 0
+tool calls          : ['book_interview']
+    result: Booked for Sunday, August 2nd at 1 PM Pacific. The invite is on its way to xingzhizhu6@gmail.com now, with a Google Meet link.
+
+========================================================================
+VERDICT
+========================================================================
+  FAIL  median turn latency 2.57s (target <= 2.0s)
+  PASS  the agent invoked 1 tool(s): ['book_interview']
+  WARN  nobody talked over the agent - barge-in still unproven

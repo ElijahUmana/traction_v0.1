@@ -34,7 +34,7 @@ pass=0; recovered=0; failed=0
 for i in $(seq 1 "$N"); do
   pkill -f "jac start" 2>/dev/null; sleep 2
   jac clean --all --force >/dev/null 2>&1; rm -rf .jac/data
-  nohup jac start main.jac --no-client -p 8000 < /dev/null > "/tmp/coldstart-$i.log" 2>&1 &
+  nohup jac start main.jac -p 8000 < /dev/null > "/tmp/coldstart-$i.log" 2>&1 &
   for _ in $(seq 1 60); do
     curl -s -m 2 -o /dev/null http://127.0.0.1:8000/healthz 2>/dev/null && break
     sleep 1

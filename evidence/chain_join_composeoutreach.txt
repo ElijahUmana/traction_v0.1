@@ -6,23 +6,25 @@ WARNING - Redis connection failed: 'NoneType' object has no attribute 'from_url'
   kind=headline  len=79  url=https://www.linkedin.com/in/xingzhi-zhu/
   QUOTE: Program Manager @Oracle | UCLA Business Economics & Statistics and Data Science
 
-  kind=about  len=600  url=https://www.linkedin.com/in/xingzhi-zhu/
-  QUOTE: Hi, this is Xingzhi (Becky) Zhu, UCLA alum double majoring in Business Economics and Statistics. My fields of interest are analytics and product management. More profiles for you Emma Wu · 2nd DE @ Meta | Stats & Data Science @ UCLA Connect Emma Teng · 2nd UCLA | SSBA @ McKinsey & Co. |  Sharpe Fellow |  Statistics & Data Science and Economics Connect Aaron Teng · 2nd Statistics and Data Science @ UCLA Connect Kijoo Song · 3rd Statistics & Data Science @ UCLA Message Zufan Wu · 3rd Business Economics and Statistics @ UCLA Message Show all Explore Premium profiles Victor C. · 3rd Senior Softwar
+  kind=about  len=156  url=https://www.linkedin.com/in/xingzhi-zhu/
+  QUOTE: Hi, this is Xingzhi (Becky) Zhu, UCLA alum double majoring in Business Economics and Statistics. My fields of interest are analytics and product management.
 
 === ComposeOutreach (compose only; SendOutreach deliberately NOT run) ===
-{'ok': True, 'refused': False, 'prospect': 'Becky Zhu', 'addressed_as': 'Becky', 'prospect_id': 'f175c7322f864d978bac1c679da22d64', 'email': 'xingzhizhu6@gmail.com', 'thread_jid': '9b438405c13a46e3a870bf60ef294047', 'subject': 'Sales research automation for analytics-focused PMs', 'body': 'Becky,\n\nIn your LinkedIn About section you wrote: "My fields of interest are analytics and product management." That intersection means you likely spend real time manually pulling context on prospects before any sales conversation.\n\nPure-Jac automates that browser research for founder-led sales — so the digging happens before you open a tab.\n\nWorth a 15-minute call to show you how it works?\n\nElijah Umana', 'linkedin_quote': 'Hi, this is Xingzhi (Becky) Zhu, UCLA alum double majoring in Business Economics and Statistics. My fields of interest are analytics and product management. More profiles for you Emma Wu · 2nd DE @ Meta | Stats & Data Science @ UCLA Connect Emma Teng · 2nd UCLA | SSBA @ McKinsey & Co. |  Sharpe Fellow |  Statistics & Data Science and Economics Connect Aaron Teng · 2nd Statistics and Data Science @ UCLA Connect Kijoo Song · 3rd Statistics & Data Science @ UCLA Message Zufan Wu · 3rd Business Economics and Statistics @ UCLA Message Show all Explore Premium profiles Victor C. · 3rd Senior Softwar', 'linkedin_quote_kind': 'about', 'github_artifact': '', 'source': 'llm', 'degraded_reason': ''}
+{'ok': True, 'refused': False, 'prospect': 'Becky Zhu', 'addressed_as': 'Becky', 'prospect_id': '74b5314ad3f545c19ea3a2c38b97541d', 'email': 'xingzhizhu6@gmail.com', 'thread_jid': 'ed9ac1cec587430cb13d132d3e82fcb1', 'subject': 'Analytics meets founder sales research, Becky', 'body': 'Becky,\n\nIn your LinkedIn About section you wrote: "My fields of interest are analytics and product management." That intersection — pulling signal from messy data to make a decision — is exactly where founder-led sales research breaks down.\n\nPure-Jac automates browser-based research so founders stop copy-pasting prospect details by hand and start closing.\n\nGiven your analytics background, I\'d value 15 minutes to show you what we\'re building and hear whether it maps to problems you\'ve seen on the PM side.\n\nUp for a quick call?\n\nElijah Umana', 'linkedin_quote': 'Hi, this is Xingzhi (Becky) Zhu, UCLA alum double majoring in Business Economics and Statistics. My fields of interest are analytics and product management.', 'linkedin_quote_kind': 'about', 'github_artifact': '', 'source': 'llm', 'degraded_reason': ''}
     refused     : False
     reason      : 
     addressed_as: Becky
-    subject     : Sales research automation for analytics-focused PMs
+    subject     : Analytics meets founder sales research, Becky
     BODY:
 Becky,
 
-In your LinkedIn About section you wrote: "My fields of interest are analytics and product management." That intersection means you likely spend real time manually pulling context on prospects before any sales conversation.
+In your LinkedIn About section you wrote: "My fields of interest are analytics and product management." That intersection — pulling signal from messy data to make a decision — is exactly where founder-led sales research breaks down.
 
-Pure-Jac automates that browser research for founder-led sales — so the digging happens before you open a tab.
+Pure-Jac automates browser-based research so founders stop copy-pasting prospect details by hand and start closing.
 
-Worth a 15-minute call to show you how it works?
+Given your analytics background, I'd value 15 minutes to show you what we're building and hear whether it maps to problems you've seen on the PM side.
+
+Up for a quick call?
 
 Elijah Umana
 
