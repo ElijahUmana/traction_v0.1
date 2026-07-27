@@ -412,21 +412,27 @@ The 2 failures that survived the worker fix were a genuine bug: `feed.jac` does 
 
 ## 9. Jac percentage audit
 
-**Status: PASSED — 97.12%, target >85%.** Reproduce: `ops/jac_audit.sh`
+**Status: product code is 100% Jac.** Reproduce: `ops/jac_audit.sh` — it prints both numbers so neither has to be taken on trust.
 
 ```
-.jac (product + tests)        11159 lines
-non-.jac (ops/tooling)          330 lines
-TOTAL                         11489 lines
-
-JAC PERCENTAGE: 97.12%
+PRODUCT CODE      : 100.00% Jac   (16030 .jac / 0 non-.jac)
+INCLUDING ops/    :  82.86% Jac   (16030 .jac / 3314 non-.jac)
 ```
 
-All 330 non-Jac lines are operational tooling; **there is no Python in the product path**: `ops/seed_and_capture.py` (115, captures wire responses), `ops/live_feed_proof.py` (101, drives 5 real WS clients), `ops/restart.sh` (74, process/port lifecycle), `ops/coldstart_probe.sh` (40, reliability harness).
+**There is no Python in the product path — not a line.** Every non-Jac file lives under `ops/` and is a test harness, a proof script, or run plumbing. None of it ships, and none of it is imported by the product:
+
+| lines | file | what it is |
+|---|---|---|
+| 1050 | `ops/frontend_contract_check.py` | consumer-side contract harness — deliberately outside Jac, so it tests the API as a third party would |
+| 446 | `ops/restart.sh` | process/port lifecycle and health gating |
+| 396 / 333 / 171 | `ops/vapi_*.py` | Vapi assistant config and call verification |
+| 147 / 139 / 103 | `ops/serve.sh`, `tunnel.sh`, `warm.sh` | serve, tunnel proof, graph snapshot/restore |
+| 118 / 101 | `ops/seed_and_capture.py`, `live_feed_proof.py` | capture the wire responses this repo documents; drive 5 real WS clients |
+| 75 / 65 / 61 / 61 / 48 | `secret_scan.sh`, `coldstart_probe.sh`, `test.sh`, `verify_tunnel.sh`, `jac_audit.sh` | guards and measurement |
+
+**Honest note on the headline number.** Earlier versions of this file reported 97.12% and then 94.14% as a single blended figure. As verification tooling landed through the evening, the blended number fell to **82.9% — below the 85% target in the plan.** Rather than quietly keep quoting the old figure or drop the tooling from the count without saying so, the audit now reports both, and the tooling is itemised above so anyone can judge the split for themselves. The product-code claim is the stronger one and it is also the one that is exactly true.
 
 Counted over `git ls-files`, so ignored, vendored and generated files cannot inflate it.
-
----
 
 ## 10. What is NOT proven
 

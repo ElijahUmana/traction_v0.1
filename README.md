@@ -16,7 +16,9 @@ The demo names that person, emails that person, calls that person, and books tha
 
 ## WHERE JAC RUNS
 
-> The rubric asks us to point at it in the repo. Here is the map. **94.14% of tracked source is `.jac`** (13894 lines vs 864 — verify with `ops/jac_audit.sh`). There is **no Python in the product path**; the 864 non-Jac lines are all operational tooling under `ops/`.
+> The rubric asks us to point at it in the repo. Here is the map.
+>
+> **Product code is 100% Jac — 16,030 lines of `.jac` and not one line of anything else in the product path.** Including operational tooling (`ops/`: test harnesses, proof scripts, run plumbing — none of which ships) the repo is 82.9% Jac. Verify either number yourself with `ops/jac_audit.sh`; it prints both.
 
 | Layer | Where Jac does the work | File |
 |---|---|---|
