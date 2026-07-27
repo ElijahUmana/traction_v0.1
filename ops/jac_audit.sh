@@ -42,7 +42,7 @@ echo
 echo "ops/ is test harnesses, proof scripts and run plumbing. It does not ship."
 echo "There is no Python in the product path."
 echo
-echo "non-.jac breakdown - every one of these is tooling, none is product:"
+echo "non-.jac breakdown (ops/ is tooling and does not ship; becky_ui CSS is product):"
 git ls-files | grep -E '\.(py|sh|js|ts|tsx|jsx|html|css)$' | while read -r f; do
   printf "  %5s  %s\n" "$(wc -l < "$f")" "$f"
 done
