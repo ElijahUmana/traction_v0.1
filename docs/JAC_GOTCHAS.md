@@ -124,10 +124,22 @@ is usually a **no-op** — the import is typically already there (it was, in bot
 like a fix. Comparing to the literal is immune by construction rather than
 immune until the next module lands.
 
-Trade-off, stated honestly: you lose compile-time checking of that one
-comparison. In an endpoint that has to keep answering while modules are added
-around it, that is the right trade. Leave a comment, or someone will "tidy" it
-back to the enum member.
+**Trade-off, stated honestly — and it has a sharp edge.** You lose compile-time
+checking of that one comparison, and the failure mode that opens is nasty: **a
+typo'd literal is a silently always-false branch.** `jac check` cannot catch it,
+because `"linkedn"` is a perfectly valid `str`. The enum-member version at least
+fails loudly on a misspelling.
+
+So the pattern trades a *loud* failure that only strikes when imports reorder
+for a *silent* one that strikes if you mistype. That is still the right trade in
+an endpoint that must keep answering while modules land around it — but only if
+you take the values **verbatim from the enum definition** rather than retyping
+them from memory. Copy them out of `contracts.sv.jac`; do not trust your recall
+of whether it is `"linkedin"` or `"LinkedIn"`.
+
+Leave a comment at the site too, or someone will "tidy" it back to the enum
+member. (Credit to BRIDGE for spotting the typo risk — the original version of
+this entry recommended the pattern without naming its cost.)
 
 **Audit your own endpoints for this.** Confirmed exposed at the time of writing:
 `bridge.jac`'s `_lane_source` / `_lane_title` (`LaneId.D/W/A`) and
