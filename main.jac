@@ -49,7 +49,7 @@ import from research {
 import from githublane { GithubLane }
 import from identity { CrossLinkToGithub, CrossLinkToLinkedIn, ResolveEmail, RankAndSelect }
 import from outreach { ComposeOutreach, SendOutreach, OnEmailReply }
-import from voice    { ScheduleCall, KbQuery, BookInterview, OnCallEnd }
+import from voice    { ScheduleCall, KbQuery, BookInterview, OnCallEnd, vapi_kb, vapi_book }
 import from rehearsal { SeedRehearsalProspect }
 import from feedseed {
     SeedRehearsalRun, SeedRehearsalReasoning,
