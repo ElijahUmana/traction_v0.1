@@ -28,11 +28,65 @@ ops/test.sh                 # run the suite (no API keys needed)
 
 ---
 
+## THE DEMO RUNS FROM AN ISOLATED CHECKOUT ON ITS OWN PORT
+
+**This is the demo configuration.** The working directory's graph store cannot be trusted: every `jac run` and `jac start` in a checkout reads and writes the same unsynchronised `.jac/data`, and concurrent processes corrupt the shared anonymous root (§7 of EVIDENCE.md).
+
+```bash
+git clone /Users/elijahumana/jachacks-traction /tmp/demo
+cp /Users/elijahumana/jachacks-traction/.env /tmp/demo/
+cp /Users/elijahumana/jachacks-traction/.linkedin_cookies*.json /tmp/demo/
+cd /tmp/demo && set -a && . ./.env && set +a
+unset ANTHROPIC_BASE_URL ANTHROPIC_CUSTOM_HEADERS ANTHROPIC_AUTH_TOKEN
+rm -rf .jac
+tail -f /dev/null | jac start main.jac --no-client --port 8123
+```
+
+- **`tail -f /dev/null` is required.** `< /dev/null` lets the server exit, and **`sleep infinity` does not exist on macOS** — BSD `sleep` rejects it and the server dies instantly.
+- **A distinct port** stops a stray server elsewhere from shadowing you.
+- **First start takes ~120 s** — it is compiling the project. Do not declare it dead early.
+- **`unset` the Anthropic proxy vars**, or every `by llm()` auth-fails with a message that looks exactly like a bad API key.
+
+Proven: 12 requests over 6 rounds, zero `_lock` errors, zero 500s, and the graph moving correctly every round (`founders 0 → 1, runs 0 → 5, lanes 0 → 20`). The identical sequence in a shared directory dies permanently.
+
+**One process per checkout. That is the whole rule.**
+
+---
+
+## ⚠️ Two of our own scripts wipe the graph
+
+`ops/test.sh` and `ops/coldstart_probe.sh` call `jac clean --all --force`, which deletes `.jac/data`. **This wiped the demo graph at 17:18 today** — 702 anchors, recovered only because a snapshot had been taken a minute earlier.
+
+Both now **refuse to run in the primary checkout** unless you set `YES_WIPE=1`. Run them in a throwaway clone.
+
+### Restoring a wiped graph
+
+```bash
+# 1. stop ALL writers first
+# 2. copy the snapshot over the live store
+cp evidence/graph_backup/anchor_store.PREWIPE-1717.db .jac/data/anchor_store.db
+# 3. delete the sidecars and users.db so nothing disagrees with it
+rm -f .jac/data/anchor_store.db-wal .jac/data/anchor_store.db-shm .jac/data/users.db
+# 4. boot with PLAIN restart - never --clean
+ops/restart.sh
+```
+
+Backups: `evidence/graph_backup/` (committed) and `~/traction-graph-backups/` (off-repo).
+
+
+---
+
 ## If something breaks
+
+### `/healthz` says ok but everything else 500s
+
+**`/healthz` returns `{"status":"ok"}` the entire time every real endpoint is 500ing.** Never gate on it. `ops/restart.sh` now gates on `POST /function/get_run_state` instead — the endpoint the dashboard actually polls.
+
+**The WebSocket also survives a `_lock` event**: the socket stays connected and broadcasting while every HTTP endpoint 500s. So the panels freeze with a healthy socket and a green `/healthz`, which is indistinguishable from "nobody is pumping." That is what makes the 3-second HTTP fallback in `docs/FRONTEND_INTEGRATION.md` §4.4 load-bearing rather than optional.
 
 ### Every endpoint returns 500, `'JacScaleUserManager' object has no attribute '_lock'`
 
-`ops/restart.sh` now detects and repairs this before it serves a request, so you should not see it again. If you do:
+**It never recovers on its own** — 6/6 failures 0.6 s apart. Do not retry. The cause is `users.db` naming a guest root that `anchor_store.db` does not contain; the runtime's own repair path needs a `_lock` that was never created, so it cannot heal. Fix:
 
 ```bash
 rm .jac/data/users.db && ops/restart.sh    # keeps the graph

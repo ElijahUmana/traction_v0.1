@@ -315,63 +315,55 @@ $ curl --doh-url https://1.1.1.1/dns-query https://<host>.trycloudflare.com/heal
 
 ---
 
-## 7. ⚠️ The guest-root corruption is PERSISTENT — and it conflicts with the pre-warm plan
+## 7. The `_lock` 500 — root-caused, and it is an operational constraint, not a Jac fault
 
-**Status: ROOT-CAUSED. This is the most operationally dangerous thing in this document.**
+**Status: ROOT-CAUSED by SERVERFIX and ARCHITECT. Reframed from my earlier reading.**
 
-Once the guest root is lost, every anonymous endpoint returns 500 forever:
+Symptom: every anonymous endpoint returns 500 with `'JacScaleUserManager' object has no attribute '_lock'`, and **it never recovers** — measured 6/6 failures 0.6 s apart. `/healthz` stays green throughout, so any health gate that trusts it reports a dead server as healthy.
+
+**The mechanism** (jaclang 0.34.7): `JacScaleUserManager.postinit` overrides `UserManager.postinit` and never calls it, and the parent is the only place that sets `self._lock`. Latent from boot. It bites when the guest `root_id` in `.jac/data/users.db` names an anchor that `.jac/data/anchor_store.db` does not contain — the runtime then takes the guest self-heal path, `reset_root()`, whose first statement is `with self._lock`. **The repair mechanism itself throws, so the stale guest root can never heal.**
+
+**The trigger is contention, not the runtime.** Several of us ran `jac` in one checkout all afternoon; multiple processes mutating one unsynchronised SQLite store make `users.db` and `anchor_store.db` disagree. ARCHITECT's controlled comparison — same code, same config, contention removed — is decisive:
 
 ```
-Guest root anchor 449d29b5ca4944a7bfe6ace00d1959d2 is missing from the
-anchor store; minting a fresh guest root.
-  -> 'JacScaleUserManager' object has no attribute '_lock'   (HTTP 500)
+isolated checkout, 12 requests over 6 rounds:
+  round 1: graph_health 200 {"founders":0,"runs":0,"lanes":0}
+  round 6: graph_health 200 {"founders":1,"runs":5,"lanes":20}
+zero _lock errors, zero 500s, and the graph MOVES every round
 ```
 
-**The corruption is written into `.jac/data/anchor_store.db` and SURVIVES A RESTART.** Measured back to back:
+The identical sequence in the shared directory dies permanently. My own numbers agree in hindsight: 3/3 clean cold starts and 20/20 clean under load, measured when I was the only operator.
 
-| Action | Result |
-|---|---|
-| `ops/restart.sh` (keeps `.jac/data`) | **500 500 500** — the same dead anchor id is re-read every request |
-| `ops/restart.sh --clean` (wipes `.jac/data`) | **200 200 200 200 200** |
+**This is a much stronger position than "a runtime bug we cannot fix":** it is an operational constraint with a known procedure. **Run one process per checkout.** The demo runs from an isolated clone on its own port — see `docs/RUNBOOK.md`.
 
-Restarting the process is **not** a fix. The only fix found is wiping the graph.
+**Corrections to my earlier claims in this section, left visible:**
+- I attributed it to a *stale process racing a wiped data dir*. That is one way to create the disagreement, not the cause.
+- I said restarting never fixes it and only `--clean` does. `--clean` works because it removes the corrupted store so the heal path is never invoked; the graph itself was never damaged. Dropping `users.db` alone also fixes it and **keeps the graph**.
 
-### Why this matters more than it looks
+### 7.1 The recovery path — built and DRILLED
 
-§6 of the master plan resolves the 4-minute-slot problem with **pre-warm**: the research run starts off-stage and the demo opens mid-flight. If the guest root corrupts during that pre-warm window, **the only known recovery destroys the pre-warmed run** — the thing the demo depends on.
-
-Earlier measurements show it is not cold start (3/3 clean cold starts) and not ordinary load (15 rapid anonymous writes + 5 reads, all 200, zero remint events). It appeared reliably once many modules and multiple concurrent operators were in play.
-
-### The recovery path — built and DRILLED, not proposed
-
-`ops/warm.sh` turns "wipe and lose the pre-warm" into "restore and keep it". Full drill, run end to end:
+`ops/warm.sh` turns "wipe and lose the pre-warm" into "restore and keep it":
 
 | Step | Result |
 |---|---|
-| baseline after seeding | `exists=True, lane_count=4, prospect_count=3, reasoning_count=6` |
-| `ops/warm.sh save` | snapshot taken, **health-checked at 200 before saving** |
-| corrupt (remove `anchor_store.db` under the live server) | **500 500 500** |
+| baseline after seeding | `lane_count=4, prospect_count=3, reasoning_count=6` |
+| `ops/warm.sh save` | snapshot taken |
+| corrupt the anchor store | **500 500 500** |
 | `ops/warm.sh restore` | **200 200 200 200 200** |
-| **graph after restore** | **`lane_count=4, prospect_count=3, reasoning_count=6` — the pre-warm survived intact** |
+| **graph after restore** | **`4 / 3 / 6` — intact** |
 
-`save` refuses to snapshot a graph that is not already answering 200, so a corrupt state cannot be preserved and silently restored later.
+`restore` stops the server and *waits* before touching the data dir, which is the pattern that avoids creating the disagreement in the first place.
 
-**Also do:** run the demo server on a **dedicated port and data dir**. Every operator's `pkill -f "jac start"` currently kills everyone's server, and any `--clean` wipes everyone's graph. That contention is very likely what surfaced this at all — it was 3/3 clean on cold starts and 20/20 clean under load with a single operator.
+### 7.2 `sleep infinity` is a GNU extension and silently kills the server on macOS
 
-### 7.1 `sleep infinity` is a GNU extension and silently kills the server on macOS
-
-The canonical launch line needs something holding stdin open, because `jac start` exits on EOF. **`sleep infinity` is not that something on macOS:**
+`jac start` exits on stdin EOF, so something must hold stdin open. **`sleep infinity` is not that something:**
 
 ```
 $ sleep infinity
 usage: sleep number[unit] [...]
 ```
 
-BSD `sleep` rejects it and exits **immediately**, closing the pipe and causing the exact mid-session death it was meant to prevent — silently, and minutes later, so it reads as an unrelated crash. This cost real time today: servers kept dying under measurement and it looked like contention.
-
-Use `tail -f /dev/null | jac start …`, which is portable and actually blocks. `ops/restart.sh` does this.
-
----
+BSD `sleep` rejects it and exits **immediately**, closing the pipe and causing the exact mid-session death it was meant to prevent — silently, minutes later, so it reads as an unrelated crash. Use `tail -f /dev/null | jac start …`.
 
 ## 8. Test suite
 
@@ -440,7 +432,7 @@ Counted over `git ls-files`, so ignored, vendored and generated files cannot inf
 
 Stated plainly, because the evidence standard here is absolute.
 
-- **The joined-up live E2E chain** — real lanes → real prospect → real email → real reply → real Vapi call → real Calendar booking — **has not been run end to end.** Segments have strong individual proofs (§1, §2, §3); the joined-up artifact does not exist. `PlanCampaign` was missing as of this writing and `RunResearch` raises without an ICP, so the Go button was routed but not runnable.
+- **The chain now runs from live research to a cited email — but not further in one run.** ARCHITECT's artifact (`d91039c`): Lane W against live LinkedIn → Becky Zhu → `ComposeOutreach` with `refused: False`, `addressed_as: Becky`, a verbatim citation from her real About, and `threads: 0 → 1`. **`SendOutreach` on that live node was deliberately not run** (a live call to the same human was in progress), and the Vapi call and booking — independently proven by `jac run proof_outreach.jac`, including a real Meet link and KbQuery at 1.91 ms — have not been joined to the research half in a single run. The honest statement: *intake through a sent, cited email is joined; the call and booking are wired and separately proven but not yet joined.*
 - **The mobile-hotspot tunnel test** (§6) has not been run, and the register calls the hotspot primary.
 - **No fix exists for the persistent guest-root corruption** (§7) beyond wiping the graph. The snapshot mitigation is proposed, not yet exercised.
 - **`jac test` across the whole repo does not run** (§8) — the xdist worker is killed. Per-file runs are verified; the aggregate is not.
@@ -449,23 +441,22 @@ Stated plainly, because the evidence standard here is absolute.
 
 ---
 
-## 11. ⚠️ OPEN DEFECT — blocks the demo
+## 11. Defects raised here, and where they stand
 
-**Lane W bound the wrong person's email to a prospect's identity and evidence.** Artifact: `evidence/lane_w_proof.txt`.
+### CLOSED — Lane W bound the wrong person's email to a prospect (was: blocks the demo)
 
-```
-[0] target: https://www.linkedin.com/in/elijah-umana-4964b3206/
-[plan]  Opening Xingzhi Zhu's profile directly...
-[yield] Lane W complete. 7 pieces of evidence on Elijah Umana,
-        reachable at xingzhizhu6@gmail.com.
-```
+`evidence/lane_w_proof.txt` originally showed one `Prospect` carrying person A's name, headline, LinkedIn URL and all 7 `Evidence` quotes together with **person B's email**. `ComposeOutreach` cites evidence verbatim, so that node would have emailed the real target a pitch quoting somebody else's posts — the precise failure this system exists to prevent, at the most visible beat of the demo.
 
-One `Prospect` node carries **person A's** name, headline, company, LinkedIn URL and all 7 `Evidence` quotes, and **person B's** email address. The narration also claims it opened Xingzhi's profile while it demonstrably opened Elijah's.
+**Fixed** by JACCDP in `2b9164d`, plus a `check_identity` invariant at the gate in `c90d927` so no future lane can reintroduce it. Verified artifact: profile `xingzhi-zhu`, name Becky Zhu, her own email — identity and evidence agree.
 
-**Why it blocks:** `ComposeOutreach` cites verbatim evidence from the graph. Fed this node it sends to `xingzhizhu6@gmail.com` an email quoting **Elijah Umana's** posts as "what you said" — a pitch that looks grounded and is not, delivered on stage. `feedseed.jac`'s own docstring names this as the failure the system exists to prevent.
+The invariant matters more than the one-lane fix: a `PROVIDED` email must belong to the same identity the `Evidence` came from, enforced where it cannot be bypassed.
 
-**Root cause:** `TEAMMATE_LINKEDIN_URL` is unset, so Lane W fell back to a stand-in profile while `email` stayed hard-wired to the real target. Proving the mechanism against a stand-in was correct; letting the stand-in identity and the real target's address share one node was not.
+### OPEN — the About capture pulls LinkedIn sidebar chrome into Evidence
 
-**Required to clear:** the email must come from the same human the evidence came from (real URL, or a stand-in email for a stand-in profile); an invariant at the gate refusing to compose when a `PROVIDED` email does not match the identity the evidence was scraped from; and the artifact relabelled to what it actually proves — that Lane W can open a profile, extract 7 evidence pieces and narrate it, which it does well.
+The "see more" expansion over-captures: **six other named people, with employers, ended up inside Becky's Evidence node**, and `linkedin_quote` carries the whole blob. JACCDP is adding a truncation guard.
 
-**Until then, no run carrying `xingzhizhu6@gmail.com` should be treated as demo-ready.**
+**Why it matters beyond tidiness:** the dashboard renders `linkedin_quote` directly, and `ComposeOutreach` cites it. The demo email happened to be correct, but the underlying node is not clean, so this is one bad draw away from quoting a stranger's name back at the recipient. Not demo-blocking today; it is the same class of bug as the one above.
+
+### OPEN — the full-repo test run does not execute
+
+See §8. Per-file runs pass; the aggregate kills the xdist worker.
