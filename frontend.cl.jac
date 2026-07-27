@@ -2804,10 +2804,8 @@ def:pub AgentCallOperations(
                     }}
                 </article>
                 <article className="live-call-monitor-card">
-                    <div className="live-monitor-agent">
-                        <Mascot state={"speaking"
-                            if scheduled is not None
-                            else "waiting"}/>
+                    <div className="live-monitor-status" aria-hidden="true">
+                        <span className="live-monitor-phone">☎</span>
                         <span className={"live-monitor-dot active"
                             if scheduled is not None
                             else "live-monitor-dot"}
