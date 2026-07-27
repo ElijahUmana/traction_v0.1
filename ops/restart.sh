@@ -122,6 +122,25 @@ server_pids() {
 # The pid actually bound to our port, whatever flags it was started with.
 port_pids() { lsof -ti tcp:"$PORT" 2>/dev/null || true; }
 
+# server_pids() deliberately includes the `sh -c "tail -f /dev/null | jac ..."`
+# wrapper, because stopping the server means stopping that too. But `tail -f`
+# keeps that wrapper alive after jac exits, which makes it USELESS as a liveness
+# signal: a jac that dies instantly on a compile error leaves the wrapper
+# running, so "is anything still there?" answers yes forever. Measured: a build
+# that failed in 2s was reported as "still booting" for the full 600s ceiling.
+# Liveness therefore asks specifically for a real jac process.
+jac_proc_pids() {
+  local pid cmd
+  for pid in $(server_pids); do
+    cmd="$(ps -o command= -p "$pid" 2>/dev/null)"
+    case "$cmd" in
+      *"tail -f /dev/null"*) : ;;          # the wrapper, not the server
+      *jac*start*) echo "$pid" ;;
+    esac
+  done
+  true
+}
+
 describe_pids() {
   local pid
   for pid in $@; do
@@ -146,7 +165,8 @@ if [ -f "$LOCK" ]; then
   fi
 fi
 # and whatever is on our port, however it got there
-pkill -f "jac start main.jac -p $PORT" 2>/dev/null || true
+# shellcheck disable=SC2046
+kill $(server_pids) $(port_pids) 2>/dev/null || true
 lsof -ti tcp:"$PORT" 2>/dev/null | xargs -r kill 2>/dev/null || true
 
 for _ in $(seq 1 30); do
@@ -313,7 +333,16 @@ start_server() {
     # Do not sit out the full 300s waiting for a process that is already gone.
     # A `jac start` that dies at launch leaves an EMPTY log and a silent wait,
     # which reads exactly like a slow compile - that cost real time to diagnose.
-    if ! pgrep -f "jac start main.jac -p $PORT" >/dev/null 2>&1; then
+    # A hard load error appears in the log within seconds and is terminal.
+    # Sitting out a 600s compile ceiling for a build that already failed is the
+    # most expensive thing this loop can do - and it reads as "still compiling".
+    if grep -qE "Error loading|No module named|Traceback \(most recent" "$LOG" 2>/dev/null; then
+      echo "    !! the build FAILED - this is not a slow compile:"
+      grep -E "Error loading|No module named" "$LOG" 2>/dev/null | head -3 | sed 's/^/       /'
+      echo "       full log: $LOG"
+      return 1
+    fi
+    if [ -z "$(jac_proc_pids)" ] && [ -z "$(port_pids)" ]; then
       echo "    !! the jac process is gone - it died at launch, it is not compiling"
       echo "       (log is $LOG, $(wc -c < "$LOG" 2>/dev/null || echo 0) bytes)"
       tail -15 "$LOG" 2>/dev/null | sed 's/^/       /'
@@ -378,7 +407,7 @@ fi
 
 # Record who owns this data dir, so the next restart stops exactly this process
 # and no one else's. Above .jac/data so a `rm -rf .jac/data` cannot orphan it.
-SERVER_PID="$(pgrep -f "jac start main.jac -p $PORT" | head -1)"
+SERVER_PID="$(port_pids | head -1)"; [ -n "$SERVER_PID" ] || SERVER_PID="$(jac_proc_pids | head -1)"
 mkdir -p "$(dirname "$LOCK")"
 { echo "pid=${SERVER_PID:-unknown}"; echo "port=$PORT"; echo "dir=$PWD"; } > "$LOCK"
 echo "==> holding $LOCK (pid ${SERVER_PID:-unknown}, port $PORT)"
@@ -445,7 +474,7 @@ else
     if ! start_server; then
       echo "!! server never became healthy after repair - see $LOG"; tail -30 "$LOG"; exit 1
     fi
-    SERVER_PID="$(pgrep -f "jac start main.jac -p $PORT" | head -1)"
+    SERVER_PID="$(port_pids | head -1)"; [ -n "$SERVER_PID" ] || SERVER_PID="$(jac_proc_pids | head -1)"
     { echo "pid=${SERVER_PID:-unknown}"; echo "port=$PORT"; echo "dir=$PWD"; } > "$LOCK"
     if smoke; then
       echo "    12/12 OK after repair"
