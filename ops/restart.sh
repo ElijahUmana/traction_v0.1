@@ -95,6 +95,33 @@ data_dir_holders() {
   printf '%s\n' $pids | sort -u | grep -v '^$' | grep -vx "$exclude" || true
 }
 
+# EVERY process match below is flag-agnostic ON PURPOSE.
+#
+# main.jac dropped `--no-client` when it started serving Becky's web client from
+# the same process (its docstring: "two processes cannot share the anchor
+# store"). Every pkill/pgrep here used to hard-code `--no-client`, so the moment
+# the launch line changed they would all have MISSED the running server: stop
+# would silently do nothing, the lockfile would record nothing, the liveness
+# check would report "died at launch" for a healthy server - and the restart
+# would start a SECOND process against the same .jac/data. That is the exact
+# corruption this script exists to prevent, introduced by a flag change.
+#
+# So: never match on optional flags. Identify the server by the directory it is
+# serving (anchor_store.db resolves relative to CWD, so CWD is what owns a data
+# dir) and by the port it holds.
+server_pids() {
+  local pid cwd here
+  here="$(pwd -P)"
+  for pid in $(pgrep -f 'jac start' 2>/dev/null || true); do
+    cwd="$(lsof -a -p "$pid" -d cwd -Fn 2>/dev/null | sed -n 's/^n//p' | head -1)"
+    [ "$cwd" = "$here" ] && echo "$pid"
+  done
+  true
+}
+
+# The pid actually bound to our port, whatever flags it was started with.
+port_pids() { lsof -ti tcp:"$PORT" 2>/dev/null || true; }
+
 describe_pids() {
   local pid
   for pid in $@; do
@@ -260,22 +287,23 @@ start_server() {
   # founders -> Runs -> HasLane, so a 200 from it proves the persisted graph is
   # actually readable - which is the property we care about.
   #
-  # 300s, not 90s: `jac clean --all` throws away the compiled JIR, so the next
-  # boot recompiles the whole project before it binds. Timing out mid-compile and
-  # printing "server never became healthy" is how you end up wiping a data dir
-  # that was never the problem.
+  # 600s, not 90s: `jac clean --all` throws away the compiled JIR, so the next
+  # boot recompiles the whole project before it binds - and now that main.jac
+  # serves the web client too, that boot also bundles the client. Timing out
+  # mid-compile and printing "server never became healthy" is how you end up
+  # wiping a data dir that was never the problem.
   # Count WALL SECONDS, not loop iterations. Each pass costs the curl timeout
   # plus the sleep, so a 300-iteration loop is really up to 30 minutes and every
   # "still booting (30s)" line understates the truth by 6x. Deadline arithmetic
   # on SECONDS is the only honest way to say how long we have waited.
-  local code bound=0 deadline=$((SECONDS + 300)) next=$((SECONDS + 30))
+  local code bound=0 deadline=$((SECONDS + 600)) next=$((SECONDS + 30))
   while [ "$SECONDS" -lt "$deadline" ]; do
     code="$(curl -s -m 3 -o /dev/null -w '%{http_code}' -X POST \
       "http://127.0.0.1:$PORT/function/graph_health" \
       -H 'Content-Type: application/json' -d '{}' 2>/dev/null || true)"
     code="${code:-000}"
     if [ "$code" = "200" ]; then
-      echo "    serving real traffic after $((SECONDS - deadline + 300))s (graph_health 200)"
+      echo "    serving real traffic after $((SECONDS - deadline + 600))s (graph_health 200)"
       return 0
     fi
     if [ "$code" != "000" ] && [ "$bound" = "0" ]; then
@@ -293,11 +321,11 @@ start_server() {
     fi
     if [ "$SECONDS" -ge "$next" ]; then
       next=$((SECONDS + 30))
-      echo "    still booting ($((SECONDS - deadline + 300))s elapsed) - a first boot in a fresh dir compiles the whole project"
+      echo "    still booting ($((SECONDS - deadline + 600))s elapsed) - a first boot in a fresh dir compiles the whole project"
     fi
     sleep 1
   done
-  echo "    gave up after 300s (last graph_health: ${code:-none})"
+  echo "    gave up after 600s (last graph_health: ${code:-none})"
   return 1
 }
 
@@ -430,6 +458,22 @@ else
     echo "!! failures are not the _lock bug - read $LOG before demoing."
     tail -30 "$LOG"; exit 1
   fi
+fi
+
+# The web client is now served by this same process via `[serve]
+# base_route_app = "app"`. If that binding is missing the API is perfectly
+# healthy and `/` just 404s - an entirely invisible way to ship a demo with no
+# UI. Cheap to check, so check it.
+echo "==> web client at /"
+ROOT="$(curl -s -m 10 -o /dev/null -w '%{http_code}' "http://127.0.0.1:$PORT/" 2>/dev/null || true)"
+ROOT="${ROOT:-000}"
+if [ "$ROOT" = "200" ]; then
+  echo "    / -> 200 (client mounted)"
+else
+  echo "    !! / -> $ROOT - the web client is NOT mounted."
+  echo "       Check [serve] base_route_app = \"app\" in jac.toml and that the"
+  echo "       launch line does NOT pass --no-client (that flag suppresses it)."
+  echo "       The API is fine; the UI is missing. Not fatal, but it is the demo."
 fi
 
 echo "==> websocket routes registered:"

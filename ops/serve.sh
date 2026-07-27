@@ -88,7 +88,14 @@ if [ "$ACTION" = "stop" ]; then
     LP="$(sed -n 's/^pid=//p' "$LOCK" | head -1)"
     [ -n "${LP:-}" ] && kill "$LP" 2>/dev/null || true
   fi
-  pkill -f "jac start main.jac -p $PORT" 2>/dev/null || true
+  # Match by PORT and by the instance's working directory - never by flag text.
+  # main.jac dropped `--no-client` when it began serving the web client too, and
+  # a pkill pattern carrying a stale flag silently matches nothing, which leaves
+  # the old process alive to share the anchor store with the next one.
+  for pid in $(pgrep -f 'jac start' 2>/dev/null || true); do
+    cwd="$(lsof -a -p "$pid" -d cwd -Fn 2>/dev/null | sed -n 's/^n//p' | head -1)"
+    [ "$cwd" = "$(cd "$DIR" 2>/dev/null && pwd -P)" ] && kill "$pid" 2>/dev/null || true
+  done
   lsof -ti tcp:"$PORT" 2>/dev/null | xargs -r kill 2>/dev/null || true
   rm -f "$LOCK"
   echo "stopped instance on :$PORT ($DIR)"
