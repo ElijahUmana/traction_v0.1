@@ -54,8 +54,12 @@ cp /Users/elijahumana/jachacks-traction/.linkedin_cookies*.json /tmp/demo/
 cd /tmp/demo && set -a && . ./.env && set +a
 unset ANTHROPIC_BASE_URL ANTHROPIC_CUSTOM_HEADERS ANTHROPIC_AUTH_TOKEN
 rm -rf .jac
-tail -f /dev/null | jac start main.jac --no-client --port 8123
+tail -f /dev/null | jac start main.jac --port 8123
 ```
+
+- **No `--no-client`.** That flag skips building and mounting the web client, so
+  the API answers and `http://127.0.0.1:8123/` serves nothing. Since the UI and
+  the walkers are one program, the flag is now a way to demo a blank page.
 
 - **`tail -f /dev/null` is required.** `< /dev/null` lets the server exit, and **`sleep infinity` does not exist on macOS** — BSD `sleep` rejects it and the server dies instantly.
 - **A distinct port** stops a stray server elsewhere from shadowing you.
@@ -74,20 +78,38 @@ Proven: 12 requests over 6 rounds, zero `_lock` errors, zero 500s, and the graph
 
 Both now **refuse to run in the primary checkout** unless you set `YES_WIPE=1`. Run them in a throwaway clone.
 
-### Restoring a wiped graph
+### Restoring a wiped graph — CHECK THE SNAPSHOT FIRST
+
+**Preference order. Not interchangeable.**
+
+| # | Snapshot | State |
+|---|---|---|
+| 1 | `evidence/graph_backup/anchor_store.CLEANCHAIN.db` | **USE THIS.** 22 anchors, the completed chain (`founders=1 prospects=1 evidence=2 identities=1 threads=1`), clean evidence. Restores the demo *mid-story*, with the email thread already on it. |
+| 2 | `evidence/graph_backup/anchor_store.PREWIPE-1717.db` | 375 anchors, clean, but **predates the chain** — no email thread. |
+| 3 | `evidence/graph_backup/anchor_store.POSTCHAIN-1727.db` | ⛔ **SUPERSEDED — DO NOT RESTORE.** Same shape as #1 but taken *before* the LinkedIn sidebar fix. Its About evidence carries **six other people** (*"More profiles for you Emma Wu … Kijoo Song … Zufan Wu"*) scraped from LinkedIn's recommendations rail. The dashboard renders `linkedin_quote` and `ComposeOutreach` cites it — restoring this puts strangers' names on screen during the demo. |
+
+**Always verify before restoring.** A snapshot is an opaque `.db`; a filename is not evidence:
+
+```bash
+ops/check_snapshot.sh evidence/graph_backup/anchor_store.CLEANCHAIN.db
+#   CLEAN - no foreign names found. Safe to restore.
+```
+
+It exits 1 and names the problem on a contaminated file. Verified against all three.
+
+### The restore itself
 
 ```bash
 # 1. stop ALL writers first
-# 2. copy the snapshot over the live store
-cp evidence/graph_backup/anchor_store.PREWIPE-1717.db .jac/data/anchor_store.db
+# 2. copy the CHECKED snapshot over the live store
+cp evidence/graph_backup/anchor_store.CLEANCHAIN.db .jac/data/anchor_store.db
 # 3. delete the sidecars and users.db so nothing disagrees with it
 rm -f .jac/data/anchor_store.db-wal .jac/data/anchor_store.db-shm .jac/data/users.db
 # 4. boot with PLAIN restart - never --clean
 ops/restart.sh
 ```
 
-Backups: `evidence/graph_backup/` (committed) and `~/traction-graph-backups/` (off-repo).
-
+Backups live in `evidence/graph_backup/` (committed, so they survive a lost laptop) and `~/traction-graph-backups/` (off-repo). The off-repo copy holds **only** CLEANCHAIN and PREWIPE — the contaminated one was deliberately removed so it cannot be grabbed in a hurry.
 
 ---
 
@@ -134,7 +156,7 @@ Use `tail -f /dev/null | jac start …`. `ops/restart.sh` already does.
 `jac start` does **not** read `.env`. Source it first:
 
 ```bash
-set -a && . ./.env && set +a && tail -f /dev/null | jac start main.jac --no-client
+set -a && . ./.env && set +a && tail -f /dev/null | jac start main.jac
 ```
 
 `ops/restart.sh` does this and warns if `ANTHROPIC_API_KEY` is still unset.
