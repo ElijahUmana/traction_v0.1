@@ -79,7 +79,28 @@ glob PROFILE_JS: str = """
     return out.join(' ').trim();
   };
 
-  const about = section('About');
+  // section() reads document.body.innerText, which respects the CSS clamp that
+  // hides most of About behind "see more" -- for this profile that leaves only
+  // the self-introduction and none of the substance. textContent ignores
+  // rendering and returns the whole string, with no click and nothing the
+  // person is notified about. Take whichever is longer.
+  //
+  // This matters more than it looks: handed the clamped 156-character version,
+  // the model was asked to quote the sentence describing her problem, found
+  // none, and invented one. The grounding check caught it and refused the
+  // email -- correctly, but the email is the demo.
+  let about = section('About');
+  const aboutAnchor = document.querySelector('#about');
+  if (aboutAnchor) {
+    const host = aboutAnchor.closest('section') || aboutAnchor.parentElement;
+    if (host) {
+      const full = (host.textContent || '')
+                     .replace(/\\s+/g, ' ')
+                     .replace(/^\\s*About\\s*/i, '')
+                     .trim();
+      if (full.length > about.length) { about = full; }
+    }
+  }
   const expLines = [];
   const eStart = lines.indexOf('Experience');
   if (eStart >= 0) {
