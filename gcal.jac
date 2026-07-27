@@ -112,6 +112,16 @@ async def create_meeting(
     if parsed is not None {
         start = ensure_tz(parsed);
     } elif start_iso.strip() {
+        # A time was requested and could not be parsed. Silently falling back to
+        # now+30 books a slot nobody asked for and then reports success - which
+        # is how a real invite landed on the prospect's calendar for a time she
+        # never agreed to. An unparseable time is a failure, not a default.
+        raise ValueError(
+            f"gcal.create_meeting: could not understand the requested time "
+            + f"'{start_iso}'. Refusing to book an arbitrary slot instead - say "
+            + "the time back to the caller and ask them to repeat it."
+        );
+    } elif start_iso.strip() {
         # A non-empty start that will not parse is NEVER a reason to book
         # "soon". The old code fell through to now+fallback here and the agent
         # went on to say "invite sent" - the human heard success and got a slot

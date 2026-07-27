@@ -151,6 +151,34 @@ def address_as(prospect: Prospect) -> str {
 }
 
 
+"""Cut LinkedIn chrome off a harvested quote.
+
+A profile scrape swallows the "More profiles for you" sidebar, so a 156-char
+About arrives 703 chars long carrying FIVE OTHER PEOPLE'S names and employers.
+That text is piped into the voice dossier as "in public they wrote, quote: ..."
+- so on a live call the agent can read a stranger's name and employer back to
+the prospect as if it were their own words. It is the single worst thing this
+system could say out loud, and the email path already refuses such quotes while
+the voice path had no equivalent gate.
+
+These markers are LinkedIn's own section boundaries, so truncating at the
+earliest one keeps exactly the person's own words.
+"""
+def strip_profile_chrome(text: str) -> str {
+    cut = len(text);
+    for marker in [
+        "More profiles for you", "Show all", "Explore Premium profiles",
+        "People also viewed", "People you may know", "Others viewed"
+    ] {
+        found = text.find(marker);
+        if found >= 0 and found < cut {
+            cut = found;
+        }
+    }
+    return text[:cut].strip();
+}
+
+
 obj Citation {
     has quote: str = "";
     has kind: str = "";
@@ -211,7 +239,7 @@ def best_linkedin_citation(prospect: Prospect) -> Citation {
             if rank == 0 {
                 continue;
             }
-            quote = ev.quote.strip();
+            quote = strip_profile_chrome(ev.quote);
             if not quote {
                 continue;
             }
@@ -241,7 +269,7 @@ def best_github_artifact(prospect: Prospect) -> str {
     best = "";
     for ev in [prospect --> [?:Evidence]] {
         if ev.source == EvidenceSource.GITHUB {
-            quote = ev.quote.strip();
+            quote = strip_profile_chrome(ev.quote);
             if len(quote) > len(best) {
                 best = quote;
             }
