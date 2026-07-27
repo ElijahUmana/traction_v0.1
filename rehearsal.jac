@@ -31,6 +31,7 @@ walker:pub SeedRehearsalProspect {
     has confirm: str = "";
     has name: str = "";
     has preferred_name: str = "";
+    has linkedin_url: str = "";
     has email: str = "";
     has handle: str = "";
     has headline: str = "";
@@ -88,9 +89,14 @@ walker:pub SeedRehearsalProspect {
 
         # What she is actually called, which is not what her profile says.
         called = self.preferred_name if self.preferred_name else cfg("TEAMMATE_PREFERRED_NAME", "");
+        # An email attributed to PROVIDED must be attributable to a profile, or
+        # the identity gate correctly refuses: a seeded prospect with no profile
+        # URL is exactly the "words scraped from another human" shape.
+        profile_url = self.linkedin_url if self.linkedin_url else cfg("TEAMMATE_LINKEDIN_URL", "");
         prospect = root ++> Prospect(
             name=target_name,
             preferred_name=called,
+            linkedin_url=profile_url,
             handle=self.handle if self.handle else target_email.split("@")[0],
             headline=self.headline,
             company=self.company,
@@ -109,7 +115,8 @@ walker:pub SeedRehearsalProspect {
             prospect +>:HasEvidence(lane=LaneId.A, confidence=0.9):+> Evidence(
                 source=EvidenceSource.LINKEDIN,
                 quote=self.linkedin_quote,
-                kind=EvidenceKind.COMMENT,
+                kind=EvidenceKind.ABOUT,
+                url=profile_url,
                 recency_days=3
             );
             made.append("linkedin");
@@ -119,6 +126,7 @@ walker:pub SeedRehearsalProspect {
                 source=EvidenceSource.GITHUB,
                 quote=self.github_artifact,
                 kind=EvidenceKind.REPO,
+                url=f"https://github.com/{self.github_login}" if self.github_login else "",
                 recency_days=9
             );
             made.append("github");
