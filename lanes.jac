@@ -169,6 +169,13 @@ def reformulate(phrase: str) -> str | None {
 # climb, and a rung that was never needed leaves no node behind.
 # ---------------------------------------------------------------------------
 
+# Hard ceiling on the ladder. A campaign plan with 8 pain phrases expands to
+# ~48 rungs per lane, and at ~4s of navigation and pacing per rung that is a
+# lane still working at minute six - which on a 4-minute stage is a hang, not
+# thoroughness. Measured live: 87 probes across three lanes.
+glob MAX_RUNGS: int = 9;
+
+
 def build_ladder(d: LaneTactics, phrases: list[str]) -> list[ProbeSpec] {
     """Expand a doctrine plus the ICP's phrases into the full ordered ladder.
 
@@ -204,6 +211,9 @@ def build_ladder(d: LaneTactics, phrases: list[str]) -> list[ProbeSpec] {
             rung += 1;
         }
 
+        if len(ladder) >= MAX_RUNGS {
+            break;
+        }
         core = reformulate(phrase);
         if core is not None {
             ladder.append(
@@ -218,7 +228,26 @@ def build_ladder(d: LaneTactics, phrases: list[str]) -> list[ProbeSpec] {
             rung += 1;
         }
     }
+    if len(ladder) > MAX_RUNGS {
+        # Announce the truncation rather than silently searching less. A lane
+        # that says what it dropped is honest; one that quietly stops is not.
+        ladder = ladder[:MAX_RUNGS];
+    }
     return ladder;
+}
+
+
+def ladder_was_capped(d: LaneTactics, phrases: list[str]) -> int {
+    """How many rungs the cap removed, so the lane can say so out loud.""";
+    full = 0;
+    dates = d.date_ladder if d.date_ladder else [DATE_TIGHT, DATE_WIDE];
+    for phrase in phrases {
+        full += len(dates);
+        if reformulate(phrase) is not None {
+            full += 1;
+        }
+    }
+    return full - MAX_RUNGS if full > MAX_RUNGS else 0;
 }
 
 

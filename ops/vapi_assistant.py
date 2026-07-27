@@ -243,7 +243,16 @@ def target() -> dict:
         # Partners. Your appointment is confirmed." A clinic sign-off is bad
         # anywhere; as the closing line in front of judges it is the worst
         # possible placement.
-        "endCallMessage": "Thanks again, and speak soon.",
+        #
+        # It must stay generic and must not claim anything. This string plays
+        # unconditionally whenever the assistant ends the call - including calls
+        # where nobody booked, where they said no, and where the booking tool
+        # failed. So it cannot name a prospect (it would call the next one
+        # "Becky") and it cannot promise an invite (019fa108 already told her an
+        # invite was coming when no booking existed). Whether a booking happened
+        # is known to the model, not to this field, so the model says that line
+        # and this one only says goodbye.
+        "endCallMessage": "Thanks so much for your time. Speak soon.",
         # Let the human cut off the opening line. They will - "who is this?" lands
         # on top of the first sentence, and an agent that ignores it is a robocall.
         "firstMessageInterruptionsEnabled": True,

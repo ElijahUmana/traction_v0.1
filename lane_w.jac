@@ -26,7 +26,71 @@ import from schema {
     Lane, Prospect, Evidence, Founder, Reasoning, LinkedinProfile,
     Surfaced, HasWarmLead, HasEvidence, Emitted, HasLane, Runs, Identity
 }
-import from research { LaneBrowser }
+import from browser.session { new_session }
+
+# Lane W talks to browser.session directly rather than borrowing research.jac's
+# LaneBrowser. Not a style choice: research.jac must import LaneW so RunResearch
+# can fan it out with the other lanes, and Jac 0.34.7 does not tolerate a cycle
+# (verified - a two-module cycle fails at import time, not at use). Same surface,
+# so the walker body is unchanged.
+obj WarmBrowser {
+    has lane_id: str;
+    has session_id: str = "";
+    has live_url: str = "";
+    has last_error: str = "";
+    has offline: bool = False;
+    has fixture: dict = {};
+    has session: any = None;
+
+    def open(context_id: str) -> bool;
+    def goto(url: str) -> bool;
+    def eval_json(expr: str) -> any;
+    def close_session;
+}
+
+impl WarmBrowser.open(context_id: str) -> bool {
+    if self.offline {
+        # Declared test mode only; no path from a real run reaches this.
+        self.session_id = "offline";
+        return True;
+    }
+    try {
+        # persist=False is load-bearing: the lane reads the canonical login but
+        # can never write back to it, so it cannot damage the auth mid-demo.
+        self.session = new_session(context_id=context_id, persist=False, proxies=True);
+        self.session_id = self.session.session_id;
+        self.live_url = self.session.live_url;
+        return True;
+    } except Exception as e {
+        self.last_error = str(e);
+        return False;
+    }
+}
+
+impl WarmBrowser.goto(url: str) -> bool {
+    if self.offline {
+        return True;
+    }
+    return self.session.goto(url, settle=2.5);
+}
+
+impl WarmBrowser.eval_json(expr: str) -> any {
+    if self.offline {
+        return self.fixture.get("eval", None);
+    }
+    try {
+        return self.session.eval_json(expr);
+    } except Exception as e {
+        self.last_error = str(e);
+        return None;
+    }
+}
+
+impl WarmBrowser.close_session {
+    if self.session is not None {
+        self.session.close();
+    }
+}
 
 glob LANE_W_DOCTRINE: str =
     "Lane W. One named warm lead, already trusted. Not searching - reading them "
@@ -266,7 +330,7 @@ walker LaneW {
             disengage;
         }
 
-        self.browser = LaneBrowser(
+        self.browser = WarmBrowser(
             lane_id=str(LaneId.W), offline=self.offline, fixture=self.fixture
         );
         if not self.browser.open(self.context_id) {

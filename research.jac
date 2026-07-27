@@ -28,6 +28,8 @@ import time;
 import json;
 import re;
 
+import from lane_w { LaneW }
+import from browser.env { env as _env_unused }
 import from schema {
     Founder, ICP, ResearchRun, Lane, Reasoning, Prospect, Evidence,
     SearchProbe,
@@ -40,6 +42,7 @@ import from contracts {
 import from lanes {
     LaneTactics, ProbeSpec, tactics_for, build_ladder, probe_url, opening_url,
     human_window, phrases_for_lane, is_midtier, midtier_verdict,
+    ladder_was_capped,
     content_search_url
 }
 import from narration {
@@ -576,6 +579,12 @@ walker LinkedInLane {
     has phrases: list[str] = [];
     has offline: bool = False;
     has fixture: dict = {};
+    # Wall-clock budget. A lane that overruns disengages CLEANLY and reports
+    # what it has: `wait` on a hung lane blocks all four and freezes the
+    # dashboard, which is an unrecoverable failure on a 4-minute stage.
+    has deadline_s: float = 150.0;
+    has started_at: float = 0.0;
+    has timed_out: bool = False;
 
     has tactics: any = None;
     # The Lane this walker was spawned on. Captured once at entry rather than
@@ -595,6 +604,7 @@ walker LinkedInLane {
     has failure: str = "";
 
     def pace(seconds: float);
+    def out_of_time -> bool;
     def narrate(here: Lane, sentence: str, kind: ReasoningKind);
     def classify(texts: list[str]) -> list[CommentVerdict];
     def search(here: Lane, probe: SearchProbe) -> list;
@@ -607,6 +617,7 @@ walker LinkedInLane {
         t = self.tactics;
 
         self.lane_node = here;
+        self.started_at = time.time();
         here.doctrine = t.doctrine;
         here.state = LaneState.LAUNCHING;
         here.keywords = self.phrases;
@@ -643,6 +654,17 @@ walker LinkedInLane {
         self.pace(t.action_delay);
 
         self.ladder = build_ladder(t, self.phrases);
+        dropped = ladder_was_capped(t, self.phrases);
+        if dropped > 0 {
+            self.narrate(
+                here,
+                f"The plan gives me {count_phrase(len(self.phrases), 'phrasing', 'phrasings')} "
+                + f"to work through. I am taking the strongest {numword(len(self.ladder))} "
+                + f"and dropping {numword(dropped)} - better to search a few "
+                + "angles properly than to still be typing when the demo ends.",
+                ReasoningKind.PLAN
+            );
+        }
         if not self.ladder {
             here.state = LaneState.DRY;
             self.narrate(
@@ -674,6 +696,23 @@ walker LinkedInLane {
 
     can at_probe with SearchProbe entry {
         t = self.tactics;
+
+        if self.out_of_time() {
+            self.timed_out = True;
+            here.state = "abandoned";
+            lane_stop = self.lane_node;
+            lane_stop.state = LaneState.DONE if self.found > 0 else LaneState.DRY;
+            self.narrate(
+                lane_stop,
+                f"I am out of time on this angle - {count_phrase(self.probes_run, 'query', 'queries')} "
+                + f"run, {count_phrase(self.found, 'name', 'names')} kept. Stopping "
+                + "here and handing over what I have rather than leaving the "
+                + "panel spinning.",
+                ReasoningKind.MISS
+            );
+            disengage;
+        }
+
         self.probes_run += 1;
         here.state = "running";
 
@@ -754,6 +793,19 @@ walker LinkedInLane {
 
 
 # --- narration -------------------------------------------------------------
+
+impl LinkedInLane.out_of_time -> bool {
+    """True once this lane has spent its wall-clock budget.
+
+    Checked before every probe and between results inside a harvest, so the
+    lane can stop at a coherent point rather than being killed mid-write.
+    """;
+    if self.started_at <= 0.0 {
+        return False;
+    }
+    return (time.time() - self.started_at) >= self.deadline_s;
+}
+
 
 impl LinkedInLane.pace(seconds: float) {
     """Inter-action delay.
@@ -902,6 +954,12 @@ impl LaneA.harvest(here: Lane, probe: SearchProbe, results: list) -> int {
     got = 0;
 
     for r in results {
+        # Lane A navigates once PER RESULT, so the budget has to be checked
+        # here too - a single probe can otherwise outlast the whole deadline.
+        if self.out_of_time() {
+            self.timed_out = True;
+            return got;
+        }
         block = str(r.get("block", ""));
         actor = parse_actor(block, str(r.get("name", "")));
         author = actor.name if actor.name else str(r.get("handle", ""));
@@ -1248,6 +1306,9 @@ obj LaneResult {
     # proves `flow` is doing real work and not quietly serializing.
     has started_at: float = 0.0;
     has finished_at: float = 0.0;
+    # True when the lane hit its wall-clock bound. A partial result must never
+    # be presentable as a complete one.
+    has timed_out: bool = False;
 }
 
 
@@ -1285,7 +1346,7 @@ def resolve_lane(lane_jid: str) -> Lane {
 
 def run_lane(
     lane_jid: str, lane_id: str, context_id: str, hypothesis: str,
-    phrases_json: str, offline: bool, fixture_json: str
+    phrases_json: str, offline: bool, fixture_json: str, deadline_s: float
 ) -> LaneResult {
     """One lane, start to finish, inside its own thread.
 
@@ -1301,14 +1362,17 @@ def run_lane(
     phrases: list[str] = json.loads(phrases_json) if phrases_json else [];
     w: LinkedInLane = LaneC(
         lane_id=LaneId.C, context_id=context_id, hypothesis=hypothesis,
-        phrases=phrases, offline=offline, fixture=fixture
+        phrases=phrases, offline=offline, fixture=fixture,
+        deadline_s=deadline_s
     );
     if lane_id == "A" {
         w = LaneA(lane_id=LaneId.A, context_id=context_id, hypothesis=hypothesis,
-                  phrases=phrases, offline=offline, fixture=fixture);
+                  phrases=phrases, offline=offline, fixture=fixture,
+                  deadline_s=deadline_s);
     } elif lane_id == "B" {
         w = LaneB(lane_id=LaneId.B, context_id=context_id, hypothesis=hypothesis,
-                  phrases=phrases, offline=offline, fixture=fixture);
+                  phrases=phrases, offline=offline, fixture=fixture,
+                  deadline_s=deadline_s);
     }
     t0 = time.time();
     try {
@@ -1332,14 +1396,15 @@ def run_lane(
         failure=w.failure,
         live_url=lane_node.live_url,
         started_at=t0,
-        finished_at=time.time()
+        finished_at=time.time(),
+        timed_out=w.timed_out
     );
 }
 
 
 def launch_lane(
     lane_jid: str, lane_id: str, phrases_json: str,
-    ctx: str, hyp: str, off: bool, fx: str
+    ctx: str, hyp: str, off: bool, fx: str, deadline_s: float
 ) -> any {
     """Start one lane and hand back its future.
 
@@ -1352,7 +1417,38 @@ def launch_lane(
     A function call gives each invocation its own parameter binding, so there is
     no shared variable left for a thread to re-read.
     """;
-    return flow run_lane(lane_jid, lane_id, ctx, hyp, phrases_json, off, fx);
+    return flow run_lane(
+        lane_jid, lane_id, ctx, hyp, phrases_json, off, fx, deadline_s
+    );
+}
+
+
+def run_lane_w(
+    lane_jid: str, warm_url: str, warm_name: str, preferred: str,
+    warm_email: str, ctx: str
+) -> dict {
+    """Body of Lane W, run inside its own thread.
+
+    Takes a jid rather than a node for the same reason the other lanes do: a
+    container is not sendable across a concurrency boundary, and re-resolving
+    with jobj() inside the thread makes this thread's writes visible.
+    """;
+    lane = jobj(lane_jid);
+    w: LaneW = LaneW(
+        context_id=ctx, warm_url=warm_url, warm_name=warm_name,
+        preferred_name=preferred, warm_email=warm_email
+    );
+    w spawn lane;
+    return {"lane": "W", "evidence": w.evidence_written, "failure": w.failure};
+}
+
+
+def launch_lane_w(
+    lane_jid: str, warm_url: str, warm_name: str, preferred: str,
+    warm_email: str, ctx: str
+) -> any {
+    """Same eager-binding rule as launch_lane - see the note there.""";
+    return flow run_lane_w(lane_jid, warm_url, warm_name, preferred, warm_email, ctx);
 }
 
 
@@ -1379,6 +1475,9 @@ walker:pub RunResearch {
     has offline: bool = False;
     # Offline page fixtures, test-suite only - see LaneBrowser.fixture.
     has fixture: dict = {};
+    # Per-lane wall-clock budget. The orchestrator must never be able to hang:
+    # every lane disengages cleanly at this bound and reports partials.
+    has lane_deadline_s: float = 150.0;
     has include_github: bool = True;
     has run: any = None;
     has lane_results: list[LaneResult] = [];
@@ -1389,9 +1488,26 @@ walker:pub RunResearch {
     def merge(run: ResearchRun);
     def narrate_run(lane: Lane, sentence: str, kind: ReasoningKind);
 
+    # POST /walker/<name> spawns on ROOT. Without this the HTTP route -- the
+    # dashboard's Go button -- returned 200, reported [], and touched nothing:
+    # no run, no lane, no browser, in 0.0 seconds. Silent success is the worst
+    # possible answer on the demo's critical path.
+    can from_root with Root entry {
+        founders = [-->[?:Founder]];
+        if not founders {
+            report {
+                "ok": False,
+                "error": "no Founder on the graph - run PlanCampaign (or intake) first"
+            };
+            disengage;
+        }
+        visit founders;
+    }
+
     can start with Founder entry;
     can finish with Founder exit;
 }
+
 
 
 impl RunResearch.start with Founder entry {
@@ -1439,13 +1555,14 @@ impl RunResearch.start with Founder entry {
     hypothesis: str = icp.hypothesis;
     offline: bool = self.offline;
     fixture_json: str = json.dumps(self.fixture) if self.fixture else "";
+    deadline: float = self.lane_deadline_s;
     # Attribute reads happen here, at the call site, BEFORE the thread starts -
     # that is what removes the race. Lists cross as JSON (E1308: a container is
     # not sendable across a concurrency boundary) and are decoded per-thread.
     futures = [
         launch_lane(
             s.lane_jid, s.lane_id, s.phrases_json,
-            ctx, hypothesis, offline, fixture_json
+            ctx, hypothesis, offline, fixture_json, deadline
         )
         for s in specs
     ];
@@ -1485,7 +1602,36 @@ impl RunResearch.start with Founder entry {
     ];
 
     # ---- collect: only now do we block ------------------------------------
-    self.lane_results = [wait f for f in futures] + [wait g for g in gh_futures];
+    # ---- Lane W: the warm lead, in the same fan-out --------------------
+    # Previously RunResearch never referenced LaneW at all, so a working Go
+    # button still produced no Becky - and a button that looks like it worked
+    # while skipping the one prospect we email, call and book is worse than a
+    # dead one. Launched here so all five lanes are genuinely in flight together.
+    w_futures: list = [];
+    warm_url: str = env("TEAMMATE_LINKEDIN_URL", "", False);
+    if warm_url and not self.offline {
+        w_node = run +>:HasLane(launched_at=time.time()):+> Lane(
+            lane_id=LaneId.W,
+            doctrine="One named warm lead, already trusted. Not searching - "
+                     + "reading them properly, so the first email can quote "
+                     + "what they actually said."
+        );
+        w_futures.append(
+            launch_lane_w(
+                jid(w_node), warm_url,
+                env("TEAMMATE_NAME", "", False),
+                env("TEAMMATE_PREFERRED_NAME", "", False),
+                env("TEAMMATE_EMAIL", "", False),
+                ctx
+            )
+        );
+    }
+
+    self.lane_results = (
+        [wait f for f in futures]
+        + [wait g for g in gh_futures]
+        + [wait w for w in w_futures]
+    );
 
     run.status = RunStatus.CROSSLINKING;
     self.merge(run);
@@ -1632,7 +1778,8 @@ impl RunResearch.finish with Founder exit {
                 "found": r.found,
                 "probes_run": r.probes_run,
                 "failure": r.failure,
-                "live_url": r.live_url
+                "live_url": r.live_url,
+                "timed_out": r.timed_out
             }
             for r in self.lane_results
         ],

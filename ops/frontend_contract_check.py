@@ -150,7 +150,12 @@ class Client:
         try:
             with urllib.request.urlopen(req, timeout=timeout) as r:
                 raw = r.read().decode()
-                return r.status, json.loads(raw)
+                try:
+                    return r.status, json.loads(raw)
+                except json.JSONDecodeError:
+                    # feed_backlog succeeds with an SSE body, not JSON. A
+                    # non-JSON 200 is a legitimate response here, not a crash.
+                    return r.status, raw
         except urllib.error.HTTPError as e:
             raw = e.read().decode()
             try:
@@ -410,8 +415,24 @@ def check_default_arg_trap(c: Client) -> None:
     check("a STRING since is coerced to int (so the type is enforced on present "
           "values)", status == 200 and isinstance(env, dict) and env.get("ok"),
           f"HTTP {status}",
-          "\"0\" -> 0, so pydantic coercion works when the field is PRESENT; "
-          "only the absent/null case is broken")
+          "\"0\" -> 0")
+
+    # The guard above is the fix for a real 500. Pin it down so it cannot rot:
+    # no body a browser can plausibly send may take down the primary data path.
+    hostile = [{}, {"since": None}, {"since": "abc"}, {"since": [1, 2]},
+               {"since": {"a": 1}}, {"since": -5}, {"since": True},
+               {"since": 1e18}, {"since": "99999999999999999999"}]
+    bad: list = []
+    for body in hostile:
+        st, ev = c.raw_post("/function/feed_since", body)
+        if st != 200 or not (isinstance(ev, dict) and ev.get("ok")):
+            detail = ""
+            if isinstance(ev, dict):
+                detail = (ev.get("error") or {}).get("message", "") \
+                    if isinstance(ev.get("error"), dict) else str(ev.get("detail", ""))
+            bad.append(f"{json.dumps(body)} -> HTTP {st} {detail[:70]}")
+    report(bad, "no plausible body can 500 the endpoint the dashboard polls",
+           f"all {len(hostile)} hostile bodies returned 200")
 
 
 def check_run_state(c: Client) -> dict:

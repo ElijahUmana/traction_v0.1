@@ -23,7 +23,7 @@ async function call(fn, args) {
   const r = await fetch(`${BASE}/function/${fn}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(args),          // <- NEVER omit this. See Trap 1.
+    body: JSON.stringify(args),
   });
   const env = await r.json();
   if (!env.ok) throw new Error(env.error?.message ?? "call failed");
@@ -167,34 +167,24 @@ Two values worth styling deliberately:
 
 ## 4. The traps
 
-### Trap 1 — `POST /function/feed_since` with `{}` returns **HTTP 500**
+### Trap 1 — pass `since` explicitly
 
-The endpoint declares `since: int = 0`, but **that default is not applied when the
-field is absent.** Measured:
+`feed_since` and `feed_backlog` used to return **HTTP 500** on `{}` and on
+`{"since": null}` — the declared `since: int = 0` was not applied when the field
+was absent. **That is fixed.** Both now coerce whatever arrives into a cursor and
+default to `0`. Verified against a live server: `{}`, `null`, `"abc"`, `[1,2]`,
+`{"a":1}`, `-5`, `true`, `1e18` and a 20-digit string all return 200.
 
-| Body | Result |
-|---|---|
-| `{"since": 0}` | ✅ 200 |
-| `{"since": "0"}` | ✅ 200 (strings are coerced) |
-| `{}` | ❌ **500** `'>=' not supported between instances of 'int' and 'str'` |
-| `{"since": null}` | ❌ **500** `'>=' not supported between instances of 'int' and 'NoneType'` |
-
-Same for `feed_backlog`. This bites in two very ordinary ways:
+Be explicit anyway — the cursor is state you own:
 
 ```js
-// ❌ a helper with a default of {} - call it with no args and you get a 500
-async function call(fn, args = {}) { ... }
-call("feed_since");                    // sends {} -> 500
-
-// ❌ undefined is dropped by JSON.stringify, so this sends {} too
-call("feed_since", { since: undefined });   // -> 500
-
-// ✅ always send an explicit integer
-call("feed_since", { since: since ?? 0 });
+call("feed_since", { since: since ?? 0 });   // ✅
 ```
 
-**Always pass `since` explicitly.** Initialise your cursor to `0`, never to
-`undefined` or `null`.
+Initialise it to `0`, never `undefined` or `null`. `JSON.stringify` drops
+undefined keys, so `{ since: undefined }` is indistinguishable from `{}` on the
+wire.
+
 
 ### Trap 2 — key off `jid`, never `_jac_id`
 
@@ -214,10 +204,10 @@ Every object carries `jid` **except**:
 
 ### Trap 3 — don't hard-code the number of lane panels
 
-A real run has **five** lanes: `A`, `B`, `C`, `D`, **`W`**. But the rehearsal seeder
-(`ops/seed_and_capture.py`, which is what you'll develop against) creates **four** —
-`A`–`D` only. Build against the seeder and you will ship four panels, then get a
-fifth on demo day.
+A run has **five** lanes: `A`, `B`, `C`, `D`, **`W`**. The rehearsal seeder used to
+build only four (`A`–`D`), so anyone developing against it shipped four panels and
+met a fifth on demo day. The seeder now builds all five — but the rule stands,
+because lane count is not yours to assume:
 
 ```js
 lanes.map(...)                       // ✅ render whatever the array contains

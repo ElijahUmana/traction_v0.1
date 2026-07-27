@@ -49,20 +49,13 @@ Every HTTP response is wrapped. **This is not the same shape as the WebSocket fr
 
 All endpoints are **`POST`**, always `Content-Type: application/json`, always with a JSON object body. A `GET` on the same path returns **404**, not the data and not a signature.
 
-> ### ⚠️ `{}` is NOT a safe body for `feed_since` / `feed_backlog`
+> ### `since` is now safe to omit — but pass it anyway
 >
-> Both declare `since: int = 0`, but **that default is not applied when the field is absent.** Measured on the running server:
+> `feed_since` and `feed_backlog` used to **500** on `{}` and on `{"since": null}`: the declared `since: int = 0` was not applied when the field was absent, and the first `>=` blew up with `'>=' not supported between instances of 'int' and 'str'`. That mattered because the helper below defaults `args` to `{}`, so `call("feed_since")` — the most natural call there is — was a 500, as was `{ since: undefined }` (JSON.stringify drops undefined keys).
 >
-> | Body | Result |
-> |---|---|
-> | `{"since": 0}` | 200 |
-> | `{"since": "0"}` | 200 — strings are coerced |
-> | `{}` | **500** `'>=' not supported between instances of 'int' and 'str'` |
-> | `{"since": null}` | **500** `'>=' not supported between instances of 'int' and 'NoneType'` |
+> **Fixed.** Both endpoints now coerce whatever arrives into a cursor, defaulting to `0`. Verified: `{}`, `null`, `"abc"`, `[1,2]`, `{"a":1}`, `-5`, `true`, `1e18` and a 20-digit string all return **200**.
 >
-> Note the helper below defaults `args` to `{}` — so `call("feed_since")` with no second argument is a 500. So is `{ since: undefined }`, because `JSON.stringify` drops undefined keys. **Always pass an explicit integer**, and initialise your cursor to `0`, never `undefined`/`null`.
->
-> This is a server-side bug, not intended behaviour. It is tracked, not papered over.
+> Still pass an explicit integer and initialise your cursor to `0` — it is the honest expression of intent, and it is what the polling loop in §3 does.
 
 ```js
 async function call(fn, args = {}) {
@@ -114,7 +107,7 @@ The research lanes, sorted by `lane_id`. **`live_url` is the Browserbase URL you
 
 > **There are FIVE lanes, not four: A, B, C, D and W.** Do not hard-code four panels, and do not assume the list is fixed — render whatever the array contains. `W` is the warm-lead lane and behaves differently from the rest; see §2.1.1.
 >
-> ⚠️ **The rehearsal seeder only builds four.** `SeedRehearsalRun` (`feedseed.jac`, driven by `ops/seed_and_capture.py`, which §7 recommends for development) creates `A`–`D` only — **no `W`**. Build against the seeder and you will ship four panels, then meet a fifth on demo day. Map over the array and filter by `lane_id`; never index positionally.
+> The rehearsal seeder used to build only four (`A`–`D`, no `W`), so anyone developing against `ops/seed_and_capture.py` — which §7 recommends — shipped four panels and met a fifth on demo day. `SeedRehearsalRun` now builds all five. The rule stands regardless: map over the array and filter by `lane_id`, never index positionally.
 
 Request: `{}`
 
@@ -536,6 +529,15 @@ That seeding is rehearsal-only scaffolding (`feedseed.jac`) and is not part of t
 | GET | `/healthz` | — | `{"status":"ok"}` |
 
 **Walkers are not functions.** A walker's payload is at **`data.reports[0]`**, not `data.result` — the opposite of every `/function/` endpoint above. `GET` on a walker path is a 404, so always probe with `POST`; a `422` means *registered, wrong arguments* (`RunResearch` requires a `run` field), while a `404` means the walker is genuinely unregistered and is a backend bug.
+
+### 8.1 One more envelope that is not the Jac envelope
+
+Two consumers on this project have now been bitten by assuming our response shape is universal:
+
+- **The WebSocket frame** is not the HTTP envelope — no `type`, `error` or `meta`; read `data.reports[0]` (§4.1).
+- **Vapi's mid-call tool responses** are not the Jac envelope either. Vapi expects `{"results": [{"toolCallId": …, "result": …}]}`. A walker returning Jac's standard envelope is a well-formed 200 that Vapi reads as `No result returned` — the call proceeds and the tool silently contributes nothing.
+
+Both failures look identical from our side: correct code, valid JSON, HTTP 200, and a consumer that sees nothing. **When an external system defines the response shape, its shape wins.** If you add an endpoint consumed by anything other than our own dashboard, check what envelope that consumer expects before assuming ours.
 
 Read-side contract owner: **verifier**. If a field you need is missing, ask — do not read it out of the graph yourself.
 
