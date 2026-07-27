@@ -390,7 +390,9 @@ def _prospect_view(p: Prospect) -> ProspectView {
     return ProspectView(
         id=jid(p),
         name=_display_name(p),
-        initials=_initials(_display_name(p)),
+        # Initials come from the FULL name even though the label shows the
+        # preferred one: the avatar for "Ada Lovelace, who goes by Ada" is AL.
+        initials=_initials(p.name if p.name else _display_name(p)),
         role=p.headline,
         organization=p.company,
         email=p.email,
@@ -940,22 +942,4 @@ def:pub synthesize_demo_interview(prospect_id: str) -> WorkspaceView {
         }
     }
     return _workspace();
-}
-
-
-# --- TEMPORARY DIAGNOSTIC (test copy only) ---------------------------------
-def:pub probesyncparens() -> str {
-    return "sync-parens";
-}
-
-async def:pub probeasyncparens() -> str {
-    return "async-parens";
-}
-
-async def:pub probeasyncbare -> str {
-    return "async-bare";
-}
-
-async def:pub probeasyncdefarg(unused: str = "") -> str {
-    return "async-defarg";
 }

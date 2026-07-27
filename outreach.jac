@@ -96,7 +96,7 @@ def to_reply_intent(label: str) -> ReplyIntent {
 }
 
 
-def draft_outreach(
+def draft_outreach_email(
     founder_name: str,
     product_one_liner: str,
     what_the_founder_needs: str,
@@ -107,15 +107,15 @@ def draft_outreach(
     github_artifact: str
 ) -> EmailDraft by llm();
 
-sem draft_outreach = "Write one cold email from a founder to a named person. You are given the exact sentence this person wrote in public and the exact artifact they built. Quote the sentence verbatim in the body and name the artifact verbatim. Do not paraphrase either one - the recipient must recognise their own words. Never write 'I came across your profile', never compliment them, never describe them as impressive. Lead with their problem, not with the product. If a field you were given is empty, do not invent a replacement and do not mention it.";
-sem draft_outreach.founder_name = "Who is sending the email; sign off with this name.";
-sem draft_outreach.product_one_liner = "What the founder's product does, in one plain sentence.";
-sem draft_outreach.what_the_founder_needs = "The specific ask, e.g. three beta testers this week.";
-sem draft_outreach.prospect_name = "What the recipient is actually called. Open the email by addressing them with exactly this, never with a fuller or more formal version of it.";
-sem draft_outreach.prospect_headline = "The recipient's professional headline, for context only - do not quote it back to them.";
-sem draft_outreach.linkedin_quote = "The exact words the recipient wrote about themselves or their work. Quote it verbatim. Empty means they have no quotable LinkedIn evidence - then rely on the GitHub artifact alone.";
-sem draft_outreach.linkedin_quote_source = "Where those words came from, e.g. 'in their LinkedIn About section'. Attribute the quote accurately using this. NEVER describe it as a recent post unless this says it was a post - claiming to have seen a post that does not exist is the fastest way to be caught out.";
-sem draft_outreach.github_artifact = "The exact GitHub artifact the recipient built or filed. Name it verbatim. Empty means rely on the LinkedIn quote alone.";
+sem draft_outreach_email = "Write one cold email from a founder to a named person. You are given the exact sentence this person wrote in public and the exact artifact they built. Quote the sentence verbatim in the body and name the artifact verbatim. Do not paraphrase either one - the recipient must recognise their own words. Never write 'I came across your profile', never compliment them, never describe them as impressive. Lead with their problem, not with the product. If a field you were given is empty, do not invent a replacement and do not mention it.";
+sem draft_outreach_email.founder_name = "Who is sending the email; sign off with this name.";
+sem draft_outreach_email.product_one_liner = "What the founder's product does, in one plain sentence.";
+sem draft_outreach_email.what_the_founder_needs = "The specific ask, e.g. three beta testers this week.";
+sem draft_outreach_email.prospect_name = "What the recipient is actually called. Open the email by addressing them with exactly this, never with a fuller or more formal version of it.";
+sem draft_outreach_email.prospect_headline = "The recipient's professional headline, for context only - do not quote it back to them.";
+sem draft_outreach_email.linkedin_quote = "The exact words the recipient wrote about themselves or their work. Quote it verbatim. Empty means they have no quotable LinkedIn evidence - then rely on the GitHub artifact alone.";
+sem draft_outreach_email.linkedin_quote_source = "Where those words came from, e.g. 'in their LinkedIn About section'. Attribute the quote accurately using this. NEVER describe it as a recent post unless this says it was a post - claiming to have seen a post that does not exist is the fastest way to be caught out.";
+sem draft_outreach_email.github_artifact = "The exact GitHub artifact the recipient built or filed. Name it verbatim. Empty means rely on the LinkedIn quote alone.";
 
 
 def read_reply_intent(reply_text: str, prospect_name: str) -> ReplyRead by llm();
@@ -666,7 +666,7 @@ async walker:pub ComposeOutreach(ProspectLookup) {
         degraded_reason = "";
 
         try {
-            draft = draft_outreach(
+            draft = draft_outreach_email(
                 founder["name"],
                 founder["one_liner"],
                 founder["needs"],
