@@ -357,22 +357,23 @@ gcal.jac          Google Calendar + Meet
 browser/          2,284 lines — WebSocket, CDP, Browserbase, in Jac
 bridge.jac        13 server functions the web client calls by name
 frontend.cl.jac   the dashboard — a Jac cl { } client
-docs/             JAC_GOTCHAS · EVIDENCE · RUNBOOK · FRONTEND_INTEGRATION
+docs/             EVIDENCE · RUNBOOK · FRONTEND_INTEGRATION · JAC_GOTCHAS
 ```
 
 ---
 
-## `docs/JAC_GOTCHAS.md`
+## How far the language got pushed
 
-Thirty-plus findings about Jac 0.34.7, each reproduced by executing code rather than reading it, each with the command that settles it. A sample:
+A few of the things this build leans on, all of them load-bearing rather than decorative:
 
-- A walker field named `reports` collides with the built-in channel; manual appends land nowhere.
-- Converting a `has` field to a `def` method silently breaks every call site — a bare method reference is always truthy.
-- Declaring a node in two modules yields two incompatible types that traversal matches **by name**, so one query returns a mixture.
-- Importing the same `obj` name from two modules **segfaults the process at load time**, with `jac check` green — and it segfaults even if you construct neither.
-- `flow` inside a list comprehension races: every worker can read the loop variable after it advanced.
-- A `walker:pub` whose entries only match node types is unreachable over HTTP — `POST /walker/<name>` spawns on root. HTTP 200, empty reports, untouched graph.
-- `@restspec(envelope=False, produces=...)` sends a return value to the wire verbatim — on the **function** path only; the walker endpoint builder ignores it.
+- **Typed edges with declared endpoints.** `Surfaced` carries the query and the rank that produced it; `HasEvidence` carries the lane and the confidence. Provenance lives on the relationship, which is where it belongs.
+- **Walkers that grow the graph as they traverse.** The search ladder creates its next `SearchProbe` and `visit`s it, so the traversal deepens exactly where the search struggled.
+- **`flow` / `wait` across five concurrent browser sessions**, each writing under its own lane so the threads touch disjoint edge lists and the merge runs serially after the barrier.
+- **`by llm()` with `sem` as the whole LLM layer** — typed return objects, semantic annotations, no prompt strings assembled by hand.
+- **`walker:pub` and `@restspec` as the integration surface**, including a raw-body function endpoint so an external service that demands its own response shape gets it without a shim.
+- **A `cl { }` client in the same program as the graph engine**, so one `jac start` serves the dashboard and the walkers over one anchor store.
+
+`docs/JAC_GOTCHAS.md` carries thirty-plus findings from getting there, each reproduced by executing code rather than reading it, each with the command that settles it.
 
 ---
 
