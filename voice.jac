@@ -53,6 +53,22 @@ glob llm: Model = Model(model_name=cfg("BYLLM_MODEL", "claude-sonnet-4-6"));
 glob KB_CACHE: dict[str, str] = {};
 
 
+"""Spell a name so text-to-speech says it the way a human does.
+
+The live call rendered "Elijah Umana" as "Elijah Yamana". The prospect hears
+the founder's name mispronounced in the first sentence, which is a small thing
+that sounds exactly like a robocall. Hyphenating the syllables fixes it without
+changing anything the recipient sees in writing.
+"""
+def speakable_name(name: str) -> str {
+    overrides = cfg("SPOKEN_NAME", "");
+    if overrides {
+        return overrides;
+    }
+    return name;
+}
+
+
 """Flatten everything the graph knows about one human into speakable prose.
 
 Written for a text-to-speech engine, so no markup, no bullet characters and no
@@ -324,8 +340,8 @@ async walker:pub ScheduleCall(ProspectLookup) {
                 },
                 "firstMessage": (
                     f"Hi {address_as(here)}, this is an AI assistant calling on behalf of "
-                    + f"{founder['name']}. You replied to our email a moment ago - is now "
-                    + "still a good time?"
+                    + f"{speakable_name(founder['name'])}. You replied to our email a moment "
+                    + "ago - is now still a good time?"
                 ),
                 "tools:append": midcall_tools(),
                 "server": {"url": public_url_for("/walker/OnCallEnd"), "timeoutSeconds": 20},
@@ -659,6 +675,17 @@ walker:pub OnCallEnd {
         vapi_call = self.call_id;
 
         if self.message {
+            # Vapi posts EVERY server message to this URL - conversation-update,
+            # speech-update, status-update - not only the end-of-call report.
+            # The live call produced ~20 of them in 18 seconds, and each one was
+            # re-running insight extraction against a partial transcript: an LLM
+            # call per message, for an answer that is thrown away and rewritten
+            # by the next one. Only the final report is worth acting on.
+            kind = str(self.message.get("type", ""));
+            if kind and kind != "end-of-call-report" {
+                report {"ok": True, "ignored": kind};
+                disengage;
+            }
             vapi_call = call_id_from(self.message, self.call_id);
             if not text {
                 artifact: dict = self.message.get("artifact", {}) as dict;
