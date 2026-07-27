@@ -6,16 +6,23 @@
 #   ops/warm.sh status
 #
 # WHY THIS EXISTS
-# The guest-root corruption is written into .jac/data/anchor_store.db and
-# SURVIVES A RESTART. Measured back to back:
+# The guest-root corruption used to survive a restart. Measured back to back at
+# the time:
 #     ops/restart.sh            (keeps .jac/data)  -> 500 500 500
 #     ops/restart.sh --clean    (wipes .jac/data)  -> 200 200 200 200 200
-# So the only recovery found is wiping the graph - which would also destroy the
-# pre-warmed research run that section 6 of the master plan depends on to fit a
-# 6-8 minute pipeline into a 4-minute slot.
+# so the only recovery known then was wiping the graph - which would also
+# destroy the pre-warmed research run that section 6 of the master plan depends
+# on to fit a 6-8 minute pipeline into a 4-minute slot.
 #
-# A snapshot turns "wipe and lose the pre-warm" into "restore and keep it".
-# Take one the moment the pre-warm looks good. It costs a directory copy.
+# That is no longer true. The corruption is a guest root_id in
+# .jac/data/users.db pointing at an anchor that .jac/data/anchor_store.db does
+# not contain - the graph itself was never damaged - and ops/restart.sh now
+# detects that and drops users.db before serving. `restore` calls restart.sh, so
+# it gets the same preflight.
+#
+# Keep taking snapshots anyway. The preflight fixes the one corruption we
+# understand; a snapshot is what covers the one we do not. It costs a directory
+# copy - take one the moment the pre-warm looks good.
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
@@ -38,7 +45,10 @@ case "$1" in
       -H 'Content-Type: application/json' -d '{}' 2>/dev/null)
     if [ "$CODE" != "200" ]; then
       echo "!! server answered $CODE, not 200 - refusing to snapshot a graph that is"
-      echo "   already corrupt. Fix it first (ops/restart.sh --clean), re-warm, then save."
+      echo "   already corrupt. Fix it first with plain ops/restart.sh - its preflight"
+      echo "   repairs the guest-root divergence and KEEPS the graph. Only reach for"
+      echo "   --clean if that does not clear it; --clean also wipes the compiled JIR,"
+      echo "   so the next boot recompiles the whole project (minutes, not seconds)."
       exit 1
     fi
     rm -rf "$SNAP"
@@ -50,7 +60,9 @@ case "$1" in
   restore)
     if [ ! -d "$SNAP" ]; then
       echo "!! no snapshot at $SNAP - nothing to restore."
-      echo "   Without one the only recovery is ops/restart.sh --clean, which"
+      echo "   Try plain ops/restart.sh first - its guest-root preflight repairs the"
+      echo "   usual corruption without touching the graph. Failing that, the last"
+      echo "   resort is ops/restart.sh --clean, which"
       echo "   WIPES the graph including any pre-warmed run."
       exit 1
     fi
