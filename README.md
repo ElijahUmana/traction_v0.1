@@ -4,7 +4,7 @@
 
 ### Tell it what you're building. Wake up with your week booked with the people who need it.
 
-**It finds the people already describing your problem in public, proves each one is the same human on LinkedIn and on GitHub, and learns enough about them to write something actually worth answering — then emails them, gets them on a call, and books the interview on your calendar. Every call it finishes sharpens the next one. You just show up.**
+**It finds the people already describing your problem in public, proves each one is the same human on LinkedIn and on GitHub, and learns enough about them to write something actually worth answering — then emails them, texts them, and calls them. It follows up. It answers their questions. It re-pitches the ones who cancel. It books the interview on your calendar. Every call it finishes sharpens the next one. You just show up.**
 
 <a href="https://devpost.com/software/traction-6se7mr">
   <img src="docs/assets/landing.png" width="900" alt="traction's opening screen: one prompt — “What are you building?” — with the Understand → Find → Reach → Learn pipeline running across the top.">
