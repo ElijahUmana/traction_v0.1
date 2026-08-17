@@ -1,22 +1,20 @@
 <div align="center">
 
-# TRACTION
+# traction
 
-### Autonomous beta-tester acquisition, built in Jac.
+### Tell it what you're building. Wake up with your week booked with the people who need it.
 
-**Five agents fan out across LinkedIn and GitHub in parallel, converge on the same humans from opposite directions, then email, call, and book them — live, on a persistent graph.**
+**It finds the people already describing your problem in public, proves each one is the same human on LinkedIn and on GitHub, and learns enough about them to write something actually worth answering — then emails them, gets them on a call, and books the interview on your calendar. Every call it finishes sharpens the next one. You just show up.**
 
 <a href="https://devpost.com/software/traction-6se7mr">
-  <img src="docs/assets/landing.png" width="900" alt="TRACTION's opening screen: one prompt — “What are you building?” — with the Understand → Find → Reach → Learn pipeline running across the top.">
+  <img src="docs/assets/landing.png" width="900" alt="traction's opening screen: one prompt — “What are you building?” — with the Understand → Find → Reach → Learn pipeline running across the top.">
 </a>
 
-**One paragraph in. Everything below happens on its own.**
+**Understand** what you're building · **Find** who has the problem · **Reach** them the way you would · **Learn** from every reply
 
 **[▶&nbsp; View the demo](https://devpost.com/software/traction-6se7mr)**
 
-`22,172 lines of Jac` · `100% Jac in the product path` · `16 nodes` · `15 typed edges` · `30 walkers` · `14 byLLM abilities`
-
-*🏆 Winner, Agentic AI Track · JacHacks SF 2026 · Founders, Inc., Fort Mason*
+*Built in Jac · 🏆 Winner, Agentic AI Track · JacHacks SF 2026 · Founders, Inc., Fort Mason*
 
 </div>
 
@@ -30,7 +28,7 @@ So they open LinkedIn, read a comment, guess at someone's GitHub handle, hope it
 
 **Those people have already told you they have the problem.** They complained about it in a LinkedIn comment. They filed an issue about it on GitHub. The signal is public — it is just split across two platforms that do not know about each other.
 
-TRACTION's thesis is therefore a claim about identity: **if you can find the same human independently from two directions, you know something real about them.**
+traction's thesis is therefore a claim about identity: **if you can find the same human independently from two directions, you know something real about them.**
 
 That claim is not a feature layered on top of a data model. It *is* the data model — one graph traversal.
 
