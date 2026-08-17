@@ -6,9 +6,17 @@
 
 **Five agents fan out across LinkedIn and GitHub in parallel, converge on the same humans from opposite directions, then email, call, and book them — live, on a persistent graph.**
 
+<a href="https://devpost.com/software/traction-6se7mr">
+  <img src="docs/assets/landing.png" width="900" alt="TRACTION's opening screen: one prompt — “What are you building?” — with the Understand → Find → Reach → Learn pipeline running across the top.">
+</a>
+
+**One paragraph in. Everything below happens on its own.**
+
+**[▶&nbsp; View the demo](https://devpost.com/software/traction-6se7mr)**
+
 `22,172 lines of Jac` · `100% Jac in the product path` · `16 nodes` · `15 typed edges` · `30 walkers` · `14 byLLM abilities`
 
-*JacHacks SF 2026 · Founders, Inc., Fort Mason*
+*🏆 Winner, Agentic AI Track · JacHacks SF 2026 · Founders, Inc., Fort Mason*
 
 </div>
 
@@ -381,6 +389,6 @@ A few of the things this build leans on, all of them load-bearing rather than de
 
 **The graph is not where the answer is stored. The graph is the answer.**
 
-[github.com/ElijahUmana/traction_v0.1](https://github.com/ElijahUmana/traction_v0.1)
+[▶&nbsp; View the demo](https://devpost.com/software/traction-6se7mr) · [github.com/ElijahUmana/traction_v0.1](https://github.com/ElijahUmana/traction_v0.1)
 
 </div>
